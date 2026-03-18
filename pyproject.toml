@@ -1,0 +1,7 @@
+[project]
+name = "agentic-event-store-enterprise-audit-infrastructure"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = []
