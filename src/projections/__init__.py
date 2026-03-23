@@ -98,10 +98,11 @@ class ProjectionDaemon:
         if not events:
             return
 
-        # Route to projections
+        # Route to projections (inject store so projections can acquire connections)
         for event in events:
             for proj in self._projections.values():
                 try:
+                    proj._store = self._store  # type: ignore[attr-defined]
                     await proj.apply_event(event)
                 except Exception:
                     logger.exception(
