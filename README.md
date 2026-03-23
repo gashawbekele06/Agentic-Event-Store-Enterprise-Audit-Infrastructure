@@ -9,12 +9,19 @@ strict regulatory audit requirements.
 
 ```
 ┌──────────────────────────────────────────────────┐
-│                 Command Handlers                  │
+│                 MCP Server (8 tools)              │
 │  submit_application · credit_analysis_completed   │
 │  fraud_screening · compliance_check · decision    │
+│  human_review · start_agent_session · integrity   │
 └──────────┬──────────────────────────┬────────────┘
-           │ validate & append        │ load stream
+           │ commands                 │ resources
            ▼                          ▼
+┌──────────────────────────────────────────────────┐
+│              Command Handlers                     │
+│  load aggregate → validate rules → append        │
+└──────────┬───────────────────────────────────────┘
+           │
+           ▼
 ┌──────────────────────────────────────────────────┐
 │              EventStore (asyncpg)                 │
 │  append()  ·  load_stream()  ·  load_all()       │
@@ -28,11 +35,11 @@ strict regulatory audit requirements.
 └─────────────────┘     └──────────────────────────┘
            │
            ▼
-┌─────────────────┐
-│  outbox table   │
-│  (guaranteed    │
-│   delivery)     │
-└─────────────────┘
+┌──────────────────────────────────────────────────┐
+│  ProjectionDaemon  (async background processor)  │
+│  ApplicationSummary · AgentPerformanceLedger     │
+│  ComplianceAuditView (temporal queries)          │
+└──────────────────────────────────────────────────┘
 ```
 
 ## Quick Start
@@ -40,92 +47,194 @@ strict regulatory audit requirements.
 ### Prerequisites
 
 - Python 3.12+
-- PostgreSQL 18+ running locally (port 5433)
-- `uv` (recommended) or `pip`
+- PostgreSQL running locally on port 5433
+- `uv` package manager
 
 ### 1. Install dependencies
 
 ```bash
-uv sync              # or: pip install -e ".[dev]"
+uv sync
 ```
 
 ### 2. Create the database and apply schema
 
 ```bash
-# Option A: Use the migration script
-python main.py migrate
-
-# Option B: Manual
+# Create the database
 psql -U postgres -h localhost -p 5433 -c "CREATE DATABASE apex_ledger;"
+
+# Apply schema (tables, indexes, constraints)
 psql -U postgres -h localhost -p 5433 -d apex_ledger -f src/schema.sql
 ```
 
-### 3. Run the test suite
+### 3. Seed the event store with starter data
 
 ```bash
-# Set the database URL (if not using the default)
-export DATABASE_URL="postgresql://postgres:13621@localhost:5433/apex_ledger_test"
+# Load 80 company profiles + 29 loan applications (664 events total)
+uv run python scripts/seed_from_starter.py
 
-# Run all tests
-pytest -v
-
-# Run only the concurrency tests
-pytest tests/test_concurrency.py -v
+# Verify load
+uv run python scripts/query_seeded_data.py
 ```
 
-The critical **double-decision concurrency test** verifies that when two
-AI agents simultaneously append to the same stream at `expected_version=3`,
-exactly one succeeds while the other receives `OptimisticConcurrencyError`.
+### 4. Run the test suite
+
+```bash
+uv run pytest tests/ -v
+```
+
+Expected: **17 passed**
+
+### 5. Run the demo suite
+
+```bash
+# Step 1 — Full lifecycle + audit chain (The Week Standard, must finish < 60s)
+uv run python demo/step1_week_standard.py
+
+# Step 2 — Optimistic concurrency control
+uv run python demo/step2_concurrency.py
+
+# Step 3 — Temporal compliance query (regulatory time-travel)
+uv run python demo/step3_temporal_query.py
+
+# Step 4 — Upcasting & immutability proof
+uv run python demo/step4_upcasting.py
+
+# Step 5 — Gas Town agent crash recovery
+uv run python demo/step5_gas_town.py
+
+# Step 6 — What-if counterfactual projector (bonus)
+uv run python demo/step6_what_if.py
+```
+
+### 6. Start the MCP server
+
+```bash
+uv run python -m src.mcp.server
+```
+
+The server exposes 8 tools (command side) and 6 resources (query side) over stdio.
 
 ## Project Structure
 
 ```
 src/
-  schema.sql                      # PostgreSQL DDL — events, event_streams, outbox, projection_checkpoints
-  event_store.py                  # EventStore async class (append, load_stream, load_all, etc.)
+  schema.sql                        # PostgreSQL DDL — events, event_streams, outbox, projection_checkpoints
+  event_store.py                    # EventStore async class: append, load_stream, load_all, outbox, archival
   models/
-    events.py                     # Pydantic models for all event types + exceptions
+    events.py                       # All Pydantic models: event types, StoredEvent, stream metadata, errors
   aggregates/
-    loan_application.py           # LoanApplicationAggregate — state machine + business rules
-    agent_session.py              # AgentSessionAggregate — Gas Town context enforcement
+    loan_application.py             # LoanApplicationAggregate — full state machine + 6 business rules
+    agent_session.py                # AgentSessionAggregate — Gas Town context enforcement, model locking
+    compliance_record.py            # ComplianceRecordAggregate — mandatory check tracking
+    audit_ledger.py                 # AuditLedgerAggregate — append-only, cross-stream causal ordering
   commands/
-    handlers.py                   # Command handlers (load → validate → determine → append)
+    handlers.py                     # All command handlers: submit, credit, fraud, compliance, decision, review
   projections/
-    __init__.py                   # Projection base class + ProjectionDaemon
-    daemon.py                     # Re-export
+    __init__.py                     # Projection base class + ProjectionDaemon export
+    daemon.py                       # ProjectionDaemon — fault-tolerant batch processing, per-projection checkpoints
+    application_summary.py          # ApplicationSummary — one row per application, current state
+    agent_performance.py            # AgentPerformanceLedger — metrics per agent model version
+    compliance_audit.py             # ComplianceAuditView — temporal queries, snapshot, rebuild_from_scratch
   upcasting/
-    registry.py                   # UpcasterRegistry + CreditAnalysisCompleted v1→v2
+    registry.py                     # UpcasterRegistry — automatic version chain on load
+    upcasters.py                    # CreditAnalysisCompleted v1→v2, DecisionGenerated v1→v2
+  integrity/
+    audit_chain.py                  # run_integrity_check() — SHA-256 hash chain, tamper detection
+    gas_town.py                     # reconstruct_agent_context() — crash recovery from event stream
+  mcp/
+    server.py                       # MCP server entry point
+    tools.py                        # 8 MCP tools (command side) with structured error types
+    resources.py                    # 6 MCP resources (query side) reading from projections
+  what_if/
+    projector.py                    # run_what_if() — counterfactual injection, causal dependency filtering
+  regulatory/
+    package.py                      # generate_regulatory_package() — self-contained JSON audit export
+
 tests/
-  conftest.py                     # Pytest fixtures (DB setup, EventStore per-test)
-  test_concurrency.py             # Double-decision test + concurrency edge cases
+  conftest.py                       # Pytest fixtures: DB setup, EventStore per-test isolation
+  test_concurrency.py               # Double-decision test: two concurrent appends, exactly one succeeds
+  test_upcasting.py                 # Immutability: v1 stored, loaded as v2, raw DB payload unchanged
+  test_projections.py               # Projection lag SLO under 50 concurrent handlers; rebuild_from_scratch
+  test_gas_town.py                  # Crash recovery: 5 events, reconstruct without in-memory state
+  test_mcp_lifecycle.py             # Full lifecycle via MCP tools; query compliance resource to verify trace
+
+demo/
+  step1_week_standard.py            # Complete decision history in < 60s (The Week Standard)
+  step2_concurrency.py              # OCC: two agents race, one wins, loser retries
+  step3_temporal_query.py           # Compliance state at T1, T2, NOW — regulatory time-travel
+  step4_upcasting.py                # v1 event upcasted to v2 at read time, DB unchanged
+  step5_gas_town.py                 # Agent crash + full context reconstruction from events
+  step6_what_if.py                  # Counterfactual: HIGH risk → REFER vs MEDIUM risk → APPROVE
+
+scripts/
+  seed_from_starter.py              # Load applicant_profiles.json + seed_events.jsonl into store
+  query_seeded_data.py              # Verify seeded data (events, streams, compliance flags)
 ```
 
 ## Key Concepts
 
+### Event Sourcing
+
+All state is derived from an immutable, append-only event log. The `events` table
+is never updated or deleted — every state change is a new event. Projections (read
+models) are built by replaying events through the `ProjectionDaemon`.
+
 ### Optimistic Concurrency Control
 
-Every `append()` call specifies an `expected_version`. The EventStore locks
-the stream row (`SELECT … FOR UPDATE`) inside the transaction and rejects
-the append if the version has advanced — raising `OptimisticConcurrencyError`.
+Every `append()` call specifies an `expected_version`. The EventStore locks the
+stream row (`SELECT … FOR UPDATE`) inside the transaction and raises
+`OptimisticConcurrencyError` if the version has advanced. Callers retry with the
+current version.
 
 ### Aggregates & Business Rules
 
 The `LoanApplicationAggregate` enforces six business rules:
 
 1. **State machine** — Valid transitions only (Submitted → AwaitingAnalysis → … → FinalApproved)
-2. **Gas Town context** — Agent must load context before decisions
-3. **Model version locking** — No duplicate credit analyses
-4. **Confidence floor** — Score < 0.6 forces REFER
-5. **Compliance dependency** — Cannot approve without all checks passed
-6. **Causal chain** — Decision must reference valid agent sessions
+2. **Gas Town context** — Agent must load context before making decisions
+3. **Model version locking** — No duplicate credit analyses from the same model
+4. **Confidence floor** — Score < 0.6 forces recommendation to REFER
+5. **Compliance dependency** — Cannot approve without all required checks passed
+6. **Causal chain** — Decision must reference valid contributing agent sessions
 
-### Command Handler Pattern
+### Gas Town Pattern
 
-```
-load aggregate → validate rules → determine events → append atomically
-```
+Every agent session begins with an `AgentContextLoaded` event (the "Gas Town anchor").
+After a crash, `reconstruct_agent_context()` replays the session stream to rebuild the
+full agent context — decisions made, applications processed, health status — without
+any in-memory state.
 
-Business logic lives in command handlers and aggregates, never in the API layer.
+### Upcasting
+
+Schema migration happens at read time, never in the database. `UpcasterRegistry` applies
+version upgrade chains (`v1 → v2`) when loading events. The stored payload is immutable.
+
+### Temporal Queries
+
+`ComplianceAuditView.get_compliance_at(application_id, timestamp)` reconstructs compliance
+state as it existed at any past moment. Required for regulatory exam packages.
+
+### MCP Server
+
+The server exposes the full event store over the Model Context Protocol:
+
+**Tools (command side):**
+- `submit_application` — Start a new loan application stream
+- `record_credit_analysis` — Append CreditAnalysisCompleted
+- `record_fraud_screening` — Append FraudScreeningCompleted
+- `record_compliance_check` — Append ComplianceRulePassed / ComplianceRuleFailed
+- `generate_decision` — Append DecisionGenerated
+- `record_human_review` — Append HumanReviewCompleted
+- `start_agent_session` — Append AgentContextLoaded (Gas Town anchor)
+- `run_integrity_check` — Verify SHA-256 audit chain
+
+**Resources (query side):**
+- `ledger://applications/{id}` — Current application state (p99 < 50ms)
+- `ledger://applications/{id}/compliance` — Compliance state with `?as_of=` temporal query
+- `ledger://applications/{id}/audit-trail` — Full event history
+- `ledger://agents/{id}/performance` — Per-model performance metrics
+- `ledger://agents/{id}/sessions/{session_id}` — Session reconstruction
+- `ledger://ledger/health` — ProjectionDaemon lag watchdog
 
 ## Environment Variables
 
@@ -133,9 +242,15 @@ Business logic lives in command handlers and aggregates, never in the API layer.
 | -------------- | -------------------------------------------------------- | --------------------- |
 | `DATABASE_URL` | `postgresql://postgres:13621@localhost:5433/apex_ledger` | PostgreSQL connection |
 
-## Interim Status
+## Completion Status
 
-**Phase 1 (Event Store Core):** Complete — schema, EventStore, optimistic concurrency, outbox
-**Phase 2 (Domain Logic):** Complete — LoanApplication + AgentSession aggregates, all command handlers, business rules
-**Phase 3 (Projections):** Stub — ProjectionDaemon framework ready, projections pending
-**Phase 4 (Upcasting):** Partial — UpcasterRegistry + CreditAnalysisCompleted v1→v2 registered
+| Phase | Deliverable | Status |
+|---|---|---|
+| Phase 1 | `src/schema.sql`, `src/event_store.py`, `src/models/events.py` | Complete |
+| Phase 2 | 4 aggregates, command handlers, 6 business rules | Complete |
+| Phase 3 | ProjectionDaemon, 3 projections, lag SLOs | Complete |
+| Phase 4 | UpcasterRegistry, audit chain, Gas Town reconstruction | Complete |
+| Phase 5 | MCP server — 8 tools, 6 resources | Complete |
+| Phase 6 | What-if projector, regulatory package | Complete (bonus) |
+| Tests | 17/17 passing | Complete |
+| Demo | 6 demo scripts, Week Standard < 60s | Complete |
