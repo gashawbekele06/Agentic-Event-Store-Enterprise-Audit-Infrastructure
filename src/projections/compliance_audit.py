@@ -116,6 +116,18 @@ class ComplianceAuditViewProjection(Projection):
 
         elif et == "ComplianceRulePassed":
             rule_id = p.get("rule_id", "")
+            # evaluation_timestamp is stored as an ISO string in JSONB;
+            # asyncpg requires a datetime object for TIMESTAMPTZ parameters.
+            eval_ts_raw = p.get("evaluation_timestamp")
+            if isinstance(eval_ts_raw, str):
+                try:
+                    eval_ts = datetime.fromisoformat(eval_ts_raw.replace("Z", "+00:00"))
+                except (ValueError, AttributeError):
+                    eval_ts = ts
+            elif isinstance(eval_ts_raw, datetime):
+                eval_ts = eval_ts_raw
+            else:
+                eval_ts = ts
             await conn.execute(
                 """
                 INSERT INTO projection_compliance_audit
@@ -127,7 +139,7 @@ class ComplianceAuditViewProjection(Projection):
                     evaluation_timestamp=$5, event_position=$6, recorded_at=$7
                 """,
                 application_id, rule_id, p.get("rule_version", ""),
-                p.get("evidence_hash", ""), p.get("evaluation_timestamp") or ts,
+                p.get("evidence_hash", ""), eval_ts,
                 event.global_position, ts,
             )
 
@@ -217,13 +229,16 @@ class ComplianceAuditViewProjection(Projection):
             # Verify the snapshot is valid (no events after snapshot_at that we missed)
             return {**data, "temporal_query_at": timestamp.isoformat(), "source": "snapshot"}
 
-        # Full replay from raw events table
+        # Full replay from raw events table.
+        # Parentheses around the OR clause are required: without them, SQL operator
+        # precedence causes the AND conditions to bind only to the second OR branch,
+        # returning all loan-stream events regardless of timestamp.
         async with store._pool.acquire() as conn:
             rows = await conn.fetch(
                 """
                 SELECT event_type, payload, global_position, recorded_at
                 FROM events
-                WHERE stream_id LIKE 'loan-' || $1 OR payload->>'application_id' = $1
+                WHERE (stream_id = 'loan-' || $1 OR payload->>'application_id' = $1)
                   AND event_type IN ('ComplianceCheckRequested', 'ComplianceReviewStarted',
                                      'ComplianceRulePassed', 'ComplianceRuleFailed')
                   AND recorded_at <= $2

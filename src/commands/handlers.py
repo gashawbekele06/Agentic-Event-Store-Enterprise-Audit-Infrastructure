@@ -9,6 +9,7 @@ Every handler:
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass, field
@@ -32,6 +33,46 @@ from src.models.events import (
     FraudScreeningCompleted,
     HumanReviewCompleted,
 )
+
+
+async def _append_to_agent_stream_with_retry(
+    store: EventStore,
+    agent_id: str,
+    session_id: str,
+    events: list,
+    correlation_id: str | None = None,
+    causation_id: str | None = None,
+    max_attempts: int = 50,
+) -> None:
+    """Append events to the agent session stream with optimistic concurrency retry.
+
+    Multiple concurrent command handlers may process different applications using
+    the same agent session.  Each will independently read agent.version=N and then
+    race to append.  This helper reloads the current stream version on each retry
+    so all concurrent tasks eventually succeed without data loss.
+
+    max_attempts=50 handles up to 50 concurrent tasks sharing one agent session,
+    each needing at most N retries where N = number of competing tasks.
+    """
+    from src.models.events import OptimisticConcurrencyError
+    stream_id = f"agent-{agent_id}-{session_id}"
+    for attempt in range(max_attempts):
+        current_version = await store.stream_version(stream_id)
+        try:
+            await store.append(
+                stream_id=stream_id,
+                events=events,
+                expected_version=current_version,
+                correlation_id=correlation_id,
+                causation_id=causation_id,
+            )
+            return
+        except OptimisticConcurrencyError:
+            if attempt == max_attempts - 1:
+                raise
+            # Yield to the event loop so competing tasks can proceed,
+            # then retry immediately with the freshly loaded version.
+            await asyncio.sleep(0)
 
 
 def _hash_inputs(data: dict) -> str:
@@ -282,14 +323,24 @@ async def handle_credit_analysis_completed(
         )
     ]
 
-    # 4 — Append atomically
-    return await store.append(
+    # 4 — Append atomically to loan stream (aggregate source of truth)
+    new_version = await store.append(
         stream_id=f"loan-{cmd.application_id}",
         events=new_events,
         expected_version=app.version,
         correlation_id=cmd.correlation_id,
         causation_id=cmd.causation_id,
     )
+
+    # Also record on agent session stream so the agent aggregate tracks which
+    # applications it has processed — required for causal chain validation (Rule 6).
+    # Uses retry because multiple concurrent handlers may share the same agent session.
+    await _append_to_agent_stream_with_retry(
+        store, cmd.agent_id, cmd.session_id, new_events,
+        cmd.correlation_id, cmd.causation_id,
+    )
+
+    return new_version
 
 
 async def handle_fraud_screening_completed(
@@ -320,13 +371,21 @@ async def handle_fraud_screening_completed(
             input_data_hash=_hash_inputs(cmd.input_data),
         )
     ]
-    return await store.append(
+    new_version = await store.append(
         stream_id=f"loan-{cmd.application_id}",
         events=new_events,
         expected_version=app.version,
         correlation_id=cmd.correlation_id,
         causation_id=cmd.causation_id,
     )
+
+    # Record on agent session stream for causal chain tracking.
+    await _append_to_agent_stream_with_retry(
+        store, cmd.agent_id, cmd.session_id, new_events,
+        cmd.correlation_id, cmd.causation_id,
+    )
+
+    return new_version
 
 
 async def handle_start_compliance_review(

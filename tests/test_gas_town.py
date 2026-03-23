@@ -108,24 +108,21 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
         store,
     )
 
+    # Save recovery identifiers before simulating crash.
+    # In a real deployment these come from a process table, recovery config, or DB scan.
+    _recovery_agent_id = agent_id
+    _recovery_session_id = session_id
+
     # Simulate crash — discard ALL in-memory agent state
-    del agent_id  # noqa: F821 — explicitly delete to simulate crash
+    del agent_id
     del session_id
 
-    # Retrieve the agent_id and session_id from what we recorded (simulating recovery)
-    agent_id_recovered = f"agent-credit-{agent_id[:8]}"  # noqa — we kept track for the test
-
     # --- CRASH SIMULATION: reconstruct from store only ---
-    # Re-use the values we set (in a real crash, you'd read these from a recovery config)
-    # Recover by listing what sessions the agent had
-    agent_id_for_recovery = agent_id_recovered.replace("agent-credit-", "agent-credit-")
-
-    # Actually just use the captured values — in real crash scenario you'd retrieve from DB
-    # The key test is that reconstruct_agent_context works WITHOUT the in-memory object
+    # The key test is that reconstruct_agent_context works WITHOUT the in-memory object.
     context = await reconstruct_agent_context(
         store=store,
-        agent_id=agent_id_recovered.replace("agent-credit-", ""),  # strip prefix
-        session_id=f"sess-{session_id[:8]}",
+        agent_id=_recovery_agent_id,
+        session_id=_recovery_session_id,
         token_budget=8000,
     )
 
