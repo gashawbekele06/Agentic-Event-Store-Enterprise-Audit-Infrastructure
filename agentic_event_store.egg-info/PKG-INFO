@@ -51,8 +51,8 @@ strict regulatory audit requirements.
 
 ### Prerequisites
 
-- Python 3.13+
-- PostgreSQL 16+ running locally
+- Python 3.12+
+- PostgreSQL 18+ running locally (port 5433)
 - `uv` (recommended) or `pip`
 
 ### 1. Install dependencies
@@ -68,15 +68,15 @@ uv sync              # or: pip install -e ".[dev]"
 python main.py migrate
 
 # Option B: Manual
-psql -U postgres -c "CREATE DATABASE apex_ledger;"
-psql -U postgres -d apex_ledger -f src/schema.sql
+psql -U postgres -h localhost -p 5433 -c "CREATE DATABASE apex_ledger;"
+psql -U postgres -h localhost -p 5433 -d apex_ledger -f src/schema.sql
 ```
 
 ### 3. Run the test suite
 
 ```bash
 # Set the database URL (if not using the default)
-export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/apex_ledger_test"
+export DATABASE_URL="postgresql://postgres:13621@localhost:5433/apex_ledger_test"
 
 # Run all tests
 pytest -v
@@ -141,9 +141,9 @@ Business logic lives in command handlers and aggregates, never in the API layer.
 
 ## Environment Variables
 
-| Variable       | Default                                                     | Description           |
-| -------------- | ----------------------------------------------------------- | --------------------- |
-| `DATABASE_URL` | `postgresql://postgres:postgres@localhost:5432/apex_ledger` | PostgreSQL connection |
+| Variable       | Default                                                  | Description           |
+| -------------- | -------------------------------------------------------- | --------------------- |
+| `DATABASE_URL` | `postgresql://postgres:13621@localhost:5433/apex_ledger` | PostgreSQL connection |
 
 ## Interim Status
 
