@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+# Ensure project root is on sys.path so `ledger` and `src` are importable
+# regardless of how this module is invoked.
+_PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
+if _PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, _PROJECT_ROOT)
+
 from src.aggregates.loan_application import ApplicationState, LoanApplicationAggregate
 from src.event_store import EventStore
 from src.models.events import (
