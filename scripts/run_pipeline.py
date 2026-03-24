@@ -195,11 +195,13 @@ async def run_pipeline(
 
 
 def parse_args():
+    import uuid
+    default_app = f"APEX-PIPE-{uuid.uuid4().hex[:6].upper()}"
     parser = argparse.ArgumentParser(description="Run full Apex loan pipeline")
-    parser.add_argument("--app",     default="APEX-PIPE-001",   help="Application ID")
-    parser.add_argument("--company", default="COMP-002",        help="Company ID")
+    parser.add_argument("--app",     default=default_app,  help="Application ID (auto-generated if omitted)")
+    parser.add_argument("--company", default="COMP-002",   help="Company ID")
     parser.add_argument("--amount",  default=500_000.0, type=float, help="Requested amount USD")
-    parser.add_argument("--docs",    default=None,              help="Documents directory (default: documents/{company})")
+    parser.add_argument("--docs",    default=None,         help="Documents directory (default: documents/{company})")
     return parser.parse_args()
 
 
