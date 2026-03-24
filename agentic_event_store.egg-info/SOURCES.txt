@@ -7,8 +7,6 @@ agentic_event_store.egg-info/requires.txt
 agentic_event_store.egg-info/top_level.txt
 src/__init__.py
 src/event_store.py
-src/regulatory_package.py
-src/what_if.py
 src/aggregates/__init__.py
 src/aggregates/agent_session.py
 src/aggregates/audit_ledger.py
@@ -30,9 +28,13 @@ src/projections/agent_performance.py
 src/projections/application_summary.py
 src/projections/compliance_audit.py
 src/projections/daemon.py
+src/regulatory/__init__.py
+src/regulatory/package.py
 src/upcasting/__init__.py
 src/upcasting/registry.py
 src/upcasting/upcasters.py
+src/what_if/__init__.py
+src/what_if/projector.py
 tests/test_concurrency.py
 tests/test_gas_town.py
 tests/test_mcp_lifecycle.py
