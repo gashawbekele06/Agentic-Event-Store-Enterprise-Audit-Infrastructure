@@ -138,6 +138,16 @@ class ApplicationSubmitted(BaseEvent):
     submitted_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class DocumentUploaded(BaseEvent):
+    """File path recorded in the loan stream — Agent 1 reads this to find documents."""
+    event_type: str = "DocumentUploaded"
+    application_id: str
+    document_type: str    # INCOME_STATEMENT | BALANCE_SHEET | FINANCIAL_EXCEL | FINANCIAL_CSV | APPLICATION_PROPOSAL
+    file_path: str        # relative path from project root
+    file_name: str
+    uploaded_by: str = "system"
+
+
 class CreditAnalysisRequested(BaseEvent):
     event_type: str = "CreditAnalysisRequested"
     application_id: str

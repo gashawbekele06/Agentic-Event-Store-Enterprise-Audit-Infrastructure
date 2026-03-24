@@ -1,0 +1,17 @@
+{
+  "doc_id": "d4899583669d2e66",
+  "filename": "income_statement_2024.pdf",
+  "file_path": "C:\\Users\\Administrator\\Desktop\\TPR1\\Week 5\\Agentic-Event-Store-Enterprise-Audit-Infrastructure\\documents\\COMP-002\\income_statement_2024.pdf",
+  "page_count": 1,
+  "origin_type": "scanned_image",
+  "layout_complexity": "multi_column",
+  "language": "en",
+  "language_confidence": 0.9,
+  "domain_hint": "financial",
+  "estimated_cost": "needs_vision_model",
+  "char_density_mean": 0.89,
+  "image_ratio_mean": 0.0,
+  "has_font_metadata": true,
+  "is_form_fillable": false,
+  "created_at": "2026-03-24T18:27:19.286885Z"
+}

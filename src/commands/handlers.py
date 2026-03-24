@@ -29,6 +29,7 @@ from src.models.events import (
     CreditAnalysisCompleted,
     CreditAnalysisRequested,
     DecisionGenerated,
+    DocumentUploaded,
     DomainError,
     FraudScreeningCompleted,
     HumanReviewCompleted,
@@ -592,3 +593,82 @@ async def handle_decline_application(
         correlation_id=cmd.correlation_id,
         causation_id=cmd.causation_id,
     )
+
+
+# ---------------------------------------------------------------------------
+# Document Upload
+# ---------------------------------------------------------------------------
+
+_DOCUMENT_TYPE_MAP = {
+    "income_statement":     "INCOME_STATEMENT",
+    "balance_sheet":        "BALANCE_SHEET",
+    "financial_statements": "FINANCIAL_EXCEL",
+    "financial_summary":    "FINANCIAL_CSV",
+    "application_proposal": "APPLICATION_PROPOSAL",
+}
+
+
+@dataclass
+class UploadDocumentsCommand:
+    application_id: str
+    company_id: str
+    documents_base_dir: str = "documents"
+    uploaded_by: str = "system"
+    correlation_id: str | None = None
+
+
+async def handle_upload_documents(
+    cmd: UploadDocumentsCommand,
+    store: EventStore,
+) -> list[str]:
+    """
+    Scan documents/{company_id}/ and append a DocumentUploaded event
+    for each recognised file to the loan stream.
+    Returns list of registered file paths.
+    """
+    from pathlib import Path
+
+    docs_dir = Path(cmd.documents_base_dir) / cmd.company_id
+    if not docs_dir.exists():
+        raise DomainError(
+            f"Documents directory not found: {docs_dir}",
+            rule="upload_documents_dir_check",
+        )
+
+    app = await LoanApplicationAggregate.load(store, cmd.application_id)
+
+    upload_events = []
+    registered: list[str] = []
+
+    for file_path in sorted(docs_dir.iterdir()):
+        if not file_path.is_file():
+            continue
+        stem = file_path.stem.lower()
+        doc_type = next(
+            (v for k, v in _DOCUMENT_TYPE_MAP.items() if k in stem), None
+        )
+        if not doc_type:
+            continue
+
+        upload_events.append(DocumentUploaded(
+            application_id=cmd.application_id,
+            document_type=doc_type,
+            file_path=str(file_path),
+            file_name=file_path.name,
+            uploaded_by=cmd.uploaded_by,
+        ))
+        registered.append(str(file_path))
+
+    if not upload_events:
+        raise DomainError(
+            f"No recognised documents found in {docs_dir}",
+            rule="upload_documents_files_check",
+        )
+
+    await store.append(
+        stream_id=f"loan-{cmd.application_id}",
+        events=upload_events,
+        expected_version=app.version,
+        correlation_id=cmd.correlation_id,
+    )
+    return registered

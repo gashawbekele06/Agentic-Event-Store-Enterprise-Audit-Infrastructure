@@ -22,7 +22,10 @@ load_dotenv()
 
 from src.event_store import EventStore
 from src.registry.client import ApplicantRegistryClient
-from src.commands.handlers import SubmitApplicationCommand, handle_submit_application
+from src.commands.handlers import (
+    SubmitApplicationCommand, handle_submit_application,
+    UploadDocumentsCommand, handle_upload_documents,
+)
 from src.commands.document_processing import ProcessDocumentsCommand, handle_process_documents
 from src.commands.credit_analysis import RunCreditAnalysisCommand, handle_credit_analysis
 from src.commands.fraud_detection import RunFraudDetectionCommand, handle_fraud_detection
@@ -65,13 +68,25 @@ async def run_pipeline(
         print(f"  company_id: {company_id}")
         print(f"  amount:     ${amount:,.0f}")
 
+        # ── Upload documents (records file paths as events) ───────────────────
+        _separator("UPLOAD DOCUMENTS")
+        registered = await handle_upload_documents(
+            UploadDocumentsCommand(
+                application_id=app_id,
+                company_id=company_id,
+                documents_base_dir=str(Path(documents_dir).parent),
+            ),
+            store,
+        )
+        for f in registered:
+            print(f"  registered: {f}")
+
         # ── Agent 1: Document Processing ──────────────────────────────────────
         _separator("AGENT 1 — DocumentProcessingAgent")
         r1 = await handle_process_documents(
             ProcessDocumentsCommand(
                 application_id=app_id,
                 agent_id="doc-agent-01",
-                documents_dir=documents_dir,
             ),
             store,
         )

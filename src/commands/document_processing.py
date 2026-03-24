@@ -78,7 +78,6 @@ DO NOT make credit or lending decisions. DO NOT suggest loan outcomes.
 class ProcessDocumentsCommand:
     application_id: str
     agent_id: str
-    documents_dir: str        # e.g. "documents/COMP-019"
     session_id: str = field(default_factory=lambda: str(uuid4()))
     model_version: str = "document-processor-v1"
     correlation_id: str | None = None
@@ -115,7 +114,7 @@ async def handle_process_documents(
         correlation_id=cmd.correlation_id,
     )
 
-    # ── Step 2: Validate inputs ───────────────────────────────────────────────
+    # ── Step 2: Validate inputs — read file paths from DocumentUploaded events ──
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
     if app.state != ApplicationState.SUBMITTED:
         raise DomainError(
@@ -125,14 +124,26 @@ async def handle_process_documents(
             rule="document_processing_state_check",
         )
 
-    docs_path = Path(cmd.documents_dir)
-    income_pdf  = docs_path / "income_statement_2024.pdf"
-    balance_pdf = docs_path / "balance_sheet_2024.pdf"
+    loan_events = await store.load_stream(f"loan-{cmd.application_id}")
+    uploaded: dict[str, str] = {}   # document_type → file_path
+    for ev in loan_events:
+        if ev.event_type == "DocumentUploaded":
+            uploaded[ev.payload["document_type"]] = ev.payload["file_path"]
+
+    if "INCOME_STATEMENT" not in uploaded or "BALANCE_SHEET" not in uploaded:
+        raise DomainError(
+            f"DocumentUploaded events not found for {cmd.application_id}. "
+            "Call handle_upload_documents() before processing.",
+            rule="document_processing_requires_upload",
+        )
+
+    income_pdf  = Path(uploaded["INCOME_STATEMENT"])
+    balance_pdf = Path(uploaded["BALANCE_SHEET"])
 
     for pdf in (income_pdf, balance_pdf):
         if not pdf.exists():
             raise DomainError(
-                f"Document not found: {pdf}",
+                f"Document not found on disk: {pdf}",
                 rule="document_processing_file_check",
             )
 
