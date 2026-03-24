@@ -17,6 +17,8 @@ dependencies = [
     "rich>=14.3.3",
     "pymupdf>=1.27.2.2",
     "streamlit>=1.55.0",
+    "fastapi>=0.135.2",
+    "uvicorn>=0.42.0",
 ]
 
 [project.optional-dependencies]

@@ -90,14 +90,47 @@ async def extract_balance_sheet(file_path: str) -> FinancialFacts:
 
 # ── Week 3 extraction path ────────────────────────────────────────────────
 
+def _pdf_is_digital(file_path: str, min_chars: int = 100) -> bool:
+    """
+    Return True if the PDF has extractable digital text on its first 3 pages.
+    Takes < 50 ms for a typical financial PDF.
+    """
+    try:
+        import pdfplumber
+        with pdfplumber.open(file_path) as pdf:
+            for page in pdf.pages[:3]:
+                if len((page.extract_text() or "").strip()) >= min_chars:
+                    return True
+    except Exception:
+        pass
+    return False
+
+
 async def _extract_via_week3(file_path: str) -> FinancialFacts:
     """
-    Run Week 3 pipeline in a subprocess so it gets its own clean Python
-    interpreter with no shared sys.modules. Falls back to pdfplumber if
-    the subprocess fails or returns no financially-useful data.
+    Smart dispatcher:
+      - Digital PDF  → pdfplumber fast path (tables + text, < 1 s)
+      - Scanned PDF  → Week 3 subprocess (OCR, slower but necessary)
+
+    Week 3's TriageAgent misclassifies native-digital PDFs as scanned images,
+    routing them to a slow OCR pipeline.  The pre-flight check fixes this by
+    detecting extractable text before ever launching the subprocess.
     """
     path = Path(file_path)
     loop = asyncio.get_running_loop()
+
+    # ── Pre-flight: is the PDF digital? ──────────────────────────────────────
+    is_digital = await loop.run_in_executor(None, _pdf_is_digital, str(path))
+
+    if is_digital:
+        print(f"[week3_adapter] Digital PDF — fast pdfplumber path: {path.name}")
+        facts = await _extract_pdfplumber(file_path)
+        print(f"[week3_adapter] Extraction OK: {path.name} "
+              f"(revenue={facts.total_revenue}, net_income={facts.net_income})")
+        return facts
+
+    # ── Scanned / image-based PDF: use Week 3 OCR subprocess ─────────────────
+    print(f"[week3_adapter] Scanned PDF detected — Week 3 OCR path: {path.name}")
 
     def _run_subprocess() -> dict:
         script = _EXTRACT_SCRIPT.format(
@@ -117,13 +150,12 @@ async def _extract_via_week3(file_path: str) -> FinancialFacts:
     try:
         raw = await loop.run_in_executor(None, _run_subprocess)
         facts = _parse_financial_facts_from_raw(raw)
-        print(f"[week3_adapter] Week 3 extraction OK: {path.name} "
+        print(f"[week3_adapter] Week 3 OCR OK: {path.name} "
               f"(revenue={facts.total_revenue}, net_income={facts.net_income})")
 
-        # If Week 3 returned nothing useful, merge with pdfplumber
         if facts.total_revenue is None and facts.net_income is None:
             print("[week3_adapter] Week 3 returned no financials — merging pdfplumber fallback")
-            fallback = await _extract_fallback(file_path)
+            fallback = await _extract_pdfplumber(file_path)
             for field_name in ["total_revenue", "gross_profit", "operating_income",
                                "ebitda", "net_income", "total_assets",
                                "total_liabilities", "total_equity"]:
@@ -134,8 +166,8 @@ async def _extract_via_week3(file_path: str) -> FinancialFacts:
 
     except Exception as e:
         print(f"[week3_adapter] Week 3 failed ({type(e).__name__}: {e}) — using pdfplumber")
-        fallback = await _extract_fallback(file_path)
-        fallback.extraction_notes.insert(0, f"Week 3 failed ({e}), used pdfplumber")
+        fallback = await _extract_pdfplumber(file_path)
+        fallback.extraction_notes.insert(0, f"Week 3 OCR failed ({e}), used pdfplumber")
         return fallback
 
 
@@ -340,29 +372,49 @@ def _to_float(val: str) -> Optional[float]:
         return None
 
 
-# ── pdfplumber fallback (when Week 3 is unavailable) ─────────────────────
+# ── pdfplumber extraction (digital PDFs and fallback) ────────────────────
 
-async def _extract_fallback(file_path: str) -> FinancialFacts:
-    """Pure pdfplumber extraction — used when Week 3 is not available."""
-    loop = asyncio.get_event_loop()
+async def _extract_pdfplumber(file_path: str) -> FinancialFacts:
+    """
+    Full pdfplumber extraction: tables first (high confidence), then text.
+    Fast for digital PDFs (< 500 ms).  Used as:
+      - Primary path for native-digital PDFs
+      - Fallback when Week 3 OCR fails or is unavailable
+    """
+    loop = asyncio.get_running_loop()
 
     def _read():
         import pdfplumber
+        tables_raw: list[list[list[str]]] = []
+        text_parts: list[str] = []
         with pdfplumber.open(file_path) as pdf:
-            return "\n".join(p.extract_text() or "" for p in pdf.pages)
+            for page in pdf.pages:
+                # Extract structured tables (preserves row/column layout)
+                for tbl in (page.extract_tables() or []):
+                    if tbl:
+                        tables_raw.append(
+                            [[str(cell or "") for cell in row] for row in tbl]
+                        )
+                # Extract plain text for regex fallback
+                text_parts.append(page.extract_text() or "")
+        return tables_raw, "\n".join(text_parts)
 
     facts:      dict = {}
     confidence: dict = {}
     notes:      list = []
 
     try:
-        text = await loop.run_in_executor(None, _read)
-        _parse_text(text, facts, confidence, notes)
+        tables_raw, text = await loop.run_in_executor(None, _read)
+        # Tables first — structured data is more reliable than regex on text
+        for tbl in tables_raw:
+            _parse_table_rows(tbl, facts, confidence)
+        # Text for any fields not found in tables
+        if text:
+            _parse_text(text, facts, confidence, notes)
     except Exception as e:
         notes.append(f"pdfplumber failed: {e}")
 
-    critical = ["total_revenue", "net_income", "total_assets"]
-    for f in critical:
+    for f in ["total_revenue", "net_income", "total_assets"]:
         if facts.get(f) is None:
             notes.append(f"{f}: not found in document")
             confidence[f] = 0.0
@@ -379,3 +431,7 @@ async def _extract_fallback(file_path: str) -> FinancialFacts:
         field_confidence  = confidence,
         extraction_notes  = notes,
     )
+
+
+# Keep old name as alias so existing callers (tests etc.) don't break
+_extract_fallback = _extract_pdfplumber

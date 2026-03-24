@@ -9,6 +9,7 @@ source = { editable = "." }
 dependencies = [
     { name = "anthropic" },
     { name = "asyncpg" },
+    { name = "fastapi" },
     { name = "mcp" },
     { name = "openai" },
     { name = "pdfplumber" },
@@ -19,6 +20,7 @@ dependencies = [
     { name = "rich" },
     { name = "streamlit" },
     { name = "typer" },
+    { name = "uvicorn" },
 ]
 
 [package.optional-dependencies]
@@ -31,6 +33,7 @@ dev = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.30.0" },
     { name = "asyncpg", specifier = ">=0.30.0" },
+    { name = "fastapi", specifier = ">=0.135.2" },
     { name = "mcp", specifier = ">=1.0.0" },
     { name = "openai", specifier = ">=1.30.0" },
     { name = "pdfplumber", specifier = ">=0.11.9" },
@@ -43,6 +46,7 @@ requires-dist = [
     { name = "rich", specifier = ">=14.3.3" },
     { name = "streamlit", specifier = ">=1.55.0" },
     { name = "typer", specifier = ">=0.24.1" },
+    { name = "uvicorn", specifier = ">=0.42.0" },
 ]
 provides-extras = ["dev"]
 
@@ -408,6 +412,22 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
+]
+
+[[package]]
+name = "fastapi"
+version = "0.135.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "annotated-doc" },
+    { name = "pydantic" },
+    { name = "starlette" },
+    { name = "typing-extensions" },
+    { name = "typing-inspection" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c4/73/5903c4b13beae98618d64eb9870c3fac4f605523dd0312ca5c80dadbd5b9/fastapi-0.135.2.tar.gz", hash = "sha256:88a832095359755527b7f63bb4c6bc9edb8329a026189eed83d6c1afcf419d56", size = 395833, upload-time = "2026-03-23T14:12:41.697Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/8f/ea/18f6d0457f9efb2fc6fa594857f92810cadb03024975726db6546b3d6fcf/fastapi-0.135.2-py3-none-any.whl", hash = "sha256:0af0447d541867e8db2a6a25c23a8c4bd80e2394ac5529bd87501bbb9e240ca5", size = 117407, upload-time = "2026-03-23T14:12:43.284Z" },
 ]
 
 [[package]]

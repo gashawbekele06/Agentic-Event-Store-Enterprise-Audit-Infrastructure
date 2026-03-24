@@ -1,0 +1,1138 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Apex Financial — Loan Pipeline Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"></script>
+  <style>
+    [x-cloak] { display: none !important; }
+    pre { white-space: pre-wrap; word-break: break-all; font-family: monospace; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #0a0a0f; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+    body { font-family: 'Courier New', Courier, monospace; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-200 min-h-screen" x-data="app()" x-init="init()">
+
+  <!-- ── Header ──────────────────────────────────────────────────── -->
+  <header class="bg-gray-900 border-b border-gray-800 px-6 py-3 flex items-center justify-between sticky top-0 z-50">
+    <div class="flex items-center gap-3">
+      <div class="w-2 h-2 rounded-full bg-indigo-400 animate-pulse"></div>
+      <span class="text-white font-bold tracking-widest text-sm">APEX FINANCIAL SERVICES</span>
+      <span class="text-gray-600 text-xs hidden md:block">| Loan Pipeline Dashboard</span>
+    </div>
+    <div class="flex items-center gap-5 text-xs text-gray-500">
+      <span>Updated: <span x-text="lastUpdated" class="text-gray-400"></span></span>
+      <span class="hidden md:inline">Lag: <span x-text="lagStr" class="text-gray-400"></span></span>
+      <button
+        @click="refresh()"
+        class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded transition-colors text-xs"
+      >&#8635; Refresh</button>
+    </div>
+  </header>
+
+  <!-- ── Tabs ────────────────────────────────────────────────────── -->
+  <nav class="bg-gray-900 border-b border-gray-800 px-6 flex gap-0">
+    <template x-for="tab in tabs" :key="tab.id">
+      <button
+        @click="switchTab(tab.id)"
+        :class="activeTab === tab.id
+          ? 'border-b-2 border-indigo-500 text-white'
+          : 'text-gray-500 hover:text-gray-300 border-b-2 border-transparent'"
+        class="px-5 py-3 text-xs font-semibold tracking-wider transition-colors uppercase"
+        x-text="tab.label"
+      ></button>
+    </template>
+  </nav>
+
+  <!-- ── Main ────────────────────────────────────────────────────── -->
+  <main class="p-6 max-w-screen-2xl mx-auto">
+
+    <!-- ════════════════════════════════════════════════════════════
+         APPLICATIONS TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'applications'" x-cloak>
+
+      <!-- Stat cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-5">
+        <div class="bg-gray-900 rounded-lg p-4 border border-gray-800">
+          <div class="text-gray-500 text-xs tracking-widest mb-2">TOTAL</div>
+          <div class="text-4xl font-bold text-white" x-text="stats.total ?? 0"></div>
+          <div class="text-gray-600 text-xs mt-1">applications</div>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-4 border border-green-900/50">
+          <div class="text-green-500 text-xs tracking-widest mb-2">APPROVED</div>
+          <div class="text-4xl font-bold text-green-400" x-text="stats.approved ?? 0"></div>
+          <div class="text-gray-600 text-xs mt-1">final decisions</div>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-4 border border-red-900/50">
+          <div class="text-red-500 text-xs tracking-widest mb-2">DECLINED</div>
+          <div class="text-4xl font-bold text-red-400" x-text="stats.declined ?? 0"></div>
+          <div class="text-gray-600 text-xs mt-1">final decisions</div>
+        </div>
+        <div class="bg-gray-900 rounded-lg p-4 border border-yellow-900/50">
+          <div class="text-yellow-500 text-xs tracking-widest mb-2">REFERRED</div>
+          <div class="text-4xl font-bold text-yellow-400" x-text="stats.referred ?? 0"></div>
+          <div class="text-gray-600 text-xs mt-1">human review</div>
+        </div>
+      </div>
+
+      <!-- Secondary stats -->
+      <div class="grid grid-cols-3 gap-3 mb-5">
+        <div class="bg-gray-900 rounded p-3 border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-500 text-xs tracking-wider">COMPLIANCE BLOCKS</span>
+          <span class="text-red-400 font-bold text-lg" x-text="stats.compliance_blocked ?? 0"></span>
+        </div>
+        <div class="bg-gray-900 rounded p-3 border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-500 text-xs tracking-wider">HIGH FRAUD (&gt;0.60)</span>
+          <span class="text-orange-400 font-bold text-lg" x-text="stats.high_fraud ?? 0"></span>
+        </div>
+        <div class="bg-gray-900 rounded p-3 border border-gray-800 flex items-center justify-between">
+          <span class="text-gray-500 text-xs tracking-wider">AVG FRAUD SCORE</span>
+          <span class="text-gray-300 font-bold text-lg"
+            x-text="stats.avg_fraud_score != null ? Number(stats.avg_fraud_score).toFixed(3) : '—'">
+          </span>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="flex gap-3 mb-4">
+        <input
+          type="text"
+          placeholder="Search app ID or company..."
+          x-model="searchQuery"
+          class="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200
+                 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+        />
+        <select
+          x-model="stateFilter"
+          class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200
+                 focus:outline-none focus:border-indigo-500"
+        >
+          <option value="">All States</option>
+          <option value="SUBMITTED">Submitted</option>
+          <option value="AWAITING_ANALYSIS">Awaiting Analysis</option>
+          <option value="ANALYSIS_COMPLETE">Analysis Complete</option>
+          <option value="COMPLIANCE_REVIEW">Compliance Review</option>
+          <option value="PENDING_DECISION">Pending Decision</option>
+          <option value="FINAL_APPROVED">Final Approved</option>
+          <option value="FINAL_DECLINED">Final Declined</option>
+        </select>
+      </div>
+
+      <!-- Loading -->
+      <div x-show="loadingApps" class="text-center py-16 text-gray-600 text-sm">Loading applications...</div>
+
+      <!-- Table -->
+      <div x-show="!loadingApps" class="overflow-x-auto rounded-lg border border-gray-800">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-gray-900 text-left text-gray-500 text-xs tracking-wider border-b border-gray-800">
+              <th class="px-4 py-3">APP ID</th>
+              <th class="px-4 py-3">COMPANY</th>
+              <th class="px-4 py-3 text-right">REQUESTED</th>
+              <th class="px-4 py-3">STATE</th>
+              <th class="px-4 py-3">RISK</th>
+              <th class="px-4 py-3 text-right">FRAUD</th>
+              <th class="px-4 py-3">COMPLIANCE</th>
+              <th class="px-4 py-3">DECISION</th>
+              <th class="px-4 py-3">UPDATED</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="a in filteredApps" :key="a.application_id">
+              <tr
+                @click="openPipeline(a.application_id)"
+                class="border-b border-gray-800/60 hover:bg-gray-800/40 cursor-pointer transition-colors"
+              >
+                <td class="px-4 py-2.5 text-indigo-400 font-semibold text-xs" x-text="a.application_id"></td>
+                <td class="px-4 py-2.5 text-gray-300 text-xs" x-text="a.applicant_id ?? '—'"></td>
+                <td class="px-4 py-2.5 text-right text-gray-300 text-xs"
+                  x-text="a.requested_amount_usd ? '$' + Number(a.requested_amount_usd).toLocaleString() : '—'">
+                </td>
+                <td class="px-4 py-2.5">
+                  <span :class="stateBadge(a.state)"
+                    class="px-2 py-0.5 rounded text-xs font-medium"
+                    x-text="a.state ?? '—'">
+                  </span>
+                </td>
+                <td class="px-4 py-2.5">
+                  <span x-show="a.risk_tier" :class="riskBadge(a.risk_tier)"
+                    class="px-2 py-0.5 rounded text-xs" x-text="a.risk_tier">
+                  </span>
+                  <span x-show="!a.risk_tier" class="text-gray-700 text-xs">—</span>
+                </td>
+                <td class="px-4 py-2.5 text-right text-xs">
+                  <span x-show="a.fraud_score != null" :class="fraudColor(a.fraud_score)"
+                    x-text="a.fraud_score != null ? Number(a.fraud_score).toFixed(3) : ''">
+                  </span>
+                  <span x-show="a.fraud_score == null" class="text-gray-700">—</span>
+                </td>
+                <td class="px-4 py-2.5">
+                  <span :class="complianceBadge(a.compliance_status)"
+                    class="px-2 py-0.5 rounded text-xs"
+                    x-text="a.compliance_status ?? 'PENDING'">
+                  </span>
+                </td>
+                <td class="px-4 py-2.5">
+                  <span x-show="a.decision" :class="decisionBadge(a.decision)"
+                    class="px-2 py-0.5 rounded text-xs font-semibold" x-text="a.decision">
+                  </span>
+                  <span x-show="!a.decision" class="text-gray-700 text-xs">—</span>
+                </td>
+                <td class="px-4 py-2.5 text-gray-600 text-xs" x-text="fmtTime(a.updated_at)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        <div x-show="filteredApps.length === 0" class="text-center py-16 text-gray-600 text-sm">
+          No applications found.
+        </div>
+      </div>
+
+    </div><!-- /applications -->
+
+    <!-- ════════════════════════════════════════════════════════════
+         PIPELINE TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'pipeline'" x-cloak>
+
+      <div class="flex gap-3 mb-6">
+        <select
+          x-model="selectedAppId"
+          class="flex-1 max-w-md bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm
+                 text-gray-200 focus:outline-none focus:border-indigo-500"
+        >
+          <option value="">Select application...</option>
+          <template x-for="a in applications" :key="a.application_id">
+            <option :value="a.application_id"
+              x-text="a.application_id + '  —  ' + (a.applicant_id ?? '') + '  ' + (a.state ?? '')">
+            </option>
+          </template>
+        </select>
+        <button
+          @click="loadPipeline()"
+          class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-sm transition-colors"
+        >Load Events</button>
+      </div>
+
+      <div x-show="loadingPipeline" class="text-center py-16 text-gray-600 text-sm">Loading events...</div>
+
+      <!-- Timeline -->
+      <div x-show="!loadingPipeline && pipelineEvents.length > 0" class="relative pl-1">
+        <!-- vertical spine -->
+        <div class="absolute left-[6.5rem] top-2 bottom-2 w-px bg-gray-800"></div>
+
+        <template x-for="evt in pipelineEvents" :key="evt.global_position">
+          <div class="flex items-start gap-3 mb-2">
+            <!-- stream label -->
+            <div class="w-24 flex-shrink-0 text-right pt-2">
+              <span :class="streamPill(evt.stream_id)"
+                class="px-1.5 py-0.5 rounded text-xs"
+                x-text="streamLabel(evt.stream_id)">
+              </span>
+            </div>
+            <!-- dot -->
+            <div class="flex-shrink-0 mt-2.5 w-3 h-3 rounded-full border-2 z-10"
+              :class="eventDot(evt.event_type)">
+            </div>
+            <!-- card -->
+            <div class="flex-1 bg-gray-900 border border-gray-800 rounded-lg p-3
+                        hover:border-gray-700 transition-colors">
+              <div class="flex items-start justify-between gap-2">
+                <div class="flex items-center flex-wrap gap-2">
+                  <span :class="eventTypeBadge(evt.event_type)"
+                    class="px-2 py-0.5 rounded text-xs font-medium"
+                    x-text="evt.event_type">
+                  </span>
+                  <span class="text-gray-500 text-xs" x-text="eventSummary(evt)"></span>
+                </div>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                  <span class="text-gray-700 text-xs" x-text="fmtTime(evt.recorded_at)"></span>
+                  <button
+                    @click="evt.expanded = !evt.expanded"
+                    class="text-gray-600 hover:text-gray-400 text-xs w-4 text-center transition-colors"
+                    x-text="evt.expanded ? '▲' : '▼'"
+                  ></button>
+                </div>
+              </div>
+              <div x-show="evt.expanded" x-cloak class="mt-2 pt-2 border-t border-gray-800">
+                <pre class="text-xs text-gray-400 overflow-x-auto max-h-64"
+                  x-text="JSON.stringify(evt.payload, null, 2)">
+                </pre>
+              </div>
+            </div>
+          </div>
+        </template>
+      </div>
+
+      <div x-show="!loadingPipeline && pipelineEvents.length === 0 && selectedAppId"
+        class="text-center py-16 text-gray-600 text-sm">
+        No events found for this application.
+      </div>
+      <div x-show="!selectedAppId && !loadingPipeline"
+        class="text-center py-16 text-gray-600 text-sm">
+        Select an application to view its event timeline.
+      </div>
+
+    </div><!-- /pipeline -->
+
+    <!-- ════════════════════════════════════════════════════════════
+         COMPLIANCE TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'compliance'" x-cloak>
+
+      <div class="flex gap-3 mb-6">
+        <select
+          x-model="complianceAppId"
+          class="flex-1 max-w-md bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm
+                 text-gray-200 focus:outline-none focus:border-indigo-500"
+        >
+          <option value="">Select application...</option>
+          <template x-for="a in applications" :key="a.application_id">
+            <option :value="a.application_id"
+              x-text="a.application_id + '  —  ' + (a.applicant_id ?? '')">
+            </option>
+          </template>
+        </select>
+        <button
+          @click="loadCompliance()"
+          class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-sm transition-colors"
+        >Load Rules</button>
+      </div>
+
+      <div x-show="loadingCompliance" class="text-center py-16 text-gray-600 text-sm">Loading compliance data...</div>
+
+      <div x-show="!loadingCompliance && complianceRules.length > 0"
+        class="overflow-x-auto rounded-lg border border-gray-800">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-gray-900 text-left text-gray-500 text-xs tracking-wider border-b border-gray-800">
+              <th class="px-4 py-3">RULE ID</th>
+              <th class="px-4 py-3">STATUS</th>
+              <th class="px-4 py-3">VERSION</th>
+              <th class="px-4 py-3">FAILURE REASON</th>
+              <th class="px-4 py-3">REMEDIATION</th>
+              <th class="px-4 py-3">EVALUATED AT</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="rule in complianceRules" :key="rule.rule_id">
+              <tr class="border-b border-gray-800/60">
+                <td class="px-4 py-2.5 font-semibold text-gray-200 text-xs" x-text="rule.rule_id"></td>
+                <td class="px-4 py-2.5">
+                  <span :class="complianceStatusBadge(rule.status)"
+                    class="px-2 py-0.5 rounded text-xs font-medium"
+                    x-text="rule.status">
+                  </span>
+                </td>
+                <td class="px-4 py-2.5 text-gray-500 text-xs" x-text="rule.rule_version ?? '—'"></td>
+                <td class="px-4 py-2.5 text-red-300 text-xs" x-text="rule.failure_reason ?? '—'"></td>
+                <td class="px-4 py-2.5 text-xs">
+                  <span x-show="rule.remediation_required" class="text-yellow-400">Required</span>
+                  <span x-show="!rule.remediation_required" class="text-gray-700">—</span>
+                </td>
+                <td class="px-4 py-2.5 text-gray-600 text-xs" x-text="fmtTime(rule.evaluation_timestamp)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+      <div x-show="!loadingCompliance && complianceRules.length === 0 && complianceAppId"
+        class="text-center py-16 text-gray-600 text-sm">
+        No compliance records for this application.
+      </div>
+      <div x-show="!complianceAppId && !loadingCompliance"
+        class="text-center py-16 text-gray-600 text-sm">
+        Select an application to view compliance rules.
+      </div>
+
+    </div><!-- /compliance -->
+
+    <!-- ════════════════════════════════════════════════════════════
+         AGENTS TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'agents'" x-cloak>
+
+      <div x-show="loadingAgents" class="text-center py-16 text-gray-600 text-sm">Loading agent data...</div>
+
+      <div x-show="!loadingAgents && agents.length === 0"
+        class="text-center py-16 text-gray-600 text-sm">
+        No agent performance data yet. Run the pipeline to generate data.
+      </div>
+
+      <div x-show="!loadingAgents && agents.length > 0"
+        class="overflow-x-auto rounded-lg border border-gray-800">
+        <table class="w-full text-sm">
+          <thead>
+            <tr class="bg-gray-900 text-left text-gray-500 text-xs tracking-wider border-b border-gray-800">
+              <th class="px-4 py-3">AGENT ID</th>
+              <th class="px-4 py-3">MODEL VERSION</th>
+              <th class="px-4 py-3 text-right">ANALYSES</th>
+              <th class="px-4 py-3 text-right">DECISIONS</th>
+              <th class="px-4 py-3 text-right">AVG CONFIDENCE</th>
+              <th class="px-4 py-3 text-right">AVG DURATION</th>
+              <th class="px-4 py-3">APPROVE / DECLINE / REFER</th>
+              <th class="px-4 py-3 text-right">OVERRIDES</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="a in agents" :key="a.agent_id + '|' + a.model_version">
+              <tr class="border-b border-gray-800/60 hover:bg-gray-800/30 transition-colors">
+                <td class="px-4 py-3 text-indigo-400 font-semibold text-xs" x-text="a.agent_id"></td>
+                <td class="px-4 py-3 text-gray-500 text-xs" x-text="a.model_version"></td>
+                <td class="px-4 py-3 text-right text-gray-300 text-xs" x-text="a.analyses_completed"></td>
+                <td class="px-4 py-3 text-right text-gray-300 text-xs" x-text="a.decisions_generated"></td>
+                <td class="px-4 py-3 text-right text-xs">
+                  <span x-show="a.avg_confidence_score != null"
+                    :class="confidenceColor(a.avg_confidence_score)"
+                    x-text="a.avg_confidence_score != null ? Number(a.avg_confidence_score).toFixed(2) : '—'">
+                  </span>
+                  <span x-show="a.avg_confidence_score == null" class="text-gray-700">—</span>
+                </td>
+                <td class="px-4 py-3 text-right text-gray-500 text-xs"
+                  x-text="a.avg_duration_ms ? Math.round(a.avg_duration_ms) + ' ms' : '—'">
+                </td>
+                <td class="px-4 py-3">
+                  <div x-show="(a.approve_count + a.decline_count + a.refer_count) > 0"
+                    class="flex items-center gap-2">
+                    <!-- progress bar -->
+                    <div class="flex h-1.5 rounded overflow-hidden bg-gray-800 w-28">
+                      <div class="bg-green-500 transition-all"
+                        :style="'width: ' + (a.approve_pct ?? 0) + '%'">
+                      </div>
+                      <div class="bg-red-500 transition-all"
+                        :style="'width: ' + (a.decline_pct ?? 0) + '%'">
+                      </div>
+                      <div class="bg-yellow-500 transition-all"
+                        :style="'width: ' + (a.refer_pct ?? 0) + '%'">
+                      </div>
+                    </div>
+                    <span class="text-green-400 text-xs" x-text="(a.approve_pct ?? 0) + '%'"></span>
+                    <span class="text-gray-700 text-xs">/</span>
+                    <span class="text-red-400 text-xs" x-text="(a.decline_pct ?? 0) + '%'"></span>
+                    <span class="text-gray-700 text-xs">/</span>
+                    <span class="text-yellow-400 text-xs" x-text="(a.refer_pct ?? 0) + '%'"></span>
+                  </div>
+                  <span x-show="(a.approve_count + a.decline_count + a.refer_count) === 0"
+                    class="text-gray-700 text-xs">—</span>
+                </td>
+                <td class="px-4 py-3 text-right text-gray-300 text-xs" x-text="a.human_override_count"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+
+    </div><!-- /agents -->
+
+    <!-- ════════════════════════════════════════════════════════════
+         EVENT EXPLORER TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'events'" x-cloak>
+
+      <div class="flex gap-3 mb-6">
+        <input
+          type="text"
+          placeholder="Stream ID — e.g.  loan-APEX-PIPE-ABC123   or   docpkg-APEX-PIPE-ABC123"
+          x-model="explorerStreamId"
+          @keydown.enter="loadStream()"
+          class="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200
+                 placeholder-gray-600 focus:outline-none focus:border-indigo-500"
+        />
+        <button
+          @click="loadStream()"
+          class="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded text-sm transition-colors"
+        >Load</button>
+      </div>
+
+      <!-- Quick stream links from selected app in pipeline tab -->
+      <div x-show="selectedAppId" class="mb-4 flex flex-wrap gap-2">
+        <span class="text-gray-600 text-xs self-center">Quick:</span>
+        <template x-for="prefix in ['loan-', 'docpkg-', 'fraud-', 'compliance-']" :key="prefix">
+          <button
+            @click="explorerStreamId = prefix + selectedAppId; loadStream()"
+            :class="streamPill(prefix + 'x')"
+            class="px-2 py-0.5 rounded text-xs hover:opacity-80 transition-opacity"
+            x-text="prefix + selectedAppId"
+          ></button>
+        </template>
+      </div>
+
+      <div x-show="loadingExplorer" class="text-center py-16 text-gray-600 text-sm">Loading stream...</div>
+
+      <div x-show="!loadingExplorer && explorerEvents.length > 0">
+        <!-- Pagination bar -->
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-gray-500 text-xs">
+            Showing
+            <span x-text="explorerOffset + 1"></span>–<span
+              x-text="Math.min(explorerOffset + explorerLimit, explorerTotal)"></span>
+            of <span x-text="explorerTotal"></span> events in
+            <span class="text-indigo-400" x-text="explorerStreamId"></span>
+          </span>
+          <div class="flex gap-2">
+            <button
+              @click="explorerPrev()"
+              :disabled="explorerOffset === 0"
+              class="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-25
+                     disabled:cursor-not-allowed rounded text-xs transition-colors"
+            >&#8592; Prev</button>
+            <button
+              @click="explorerNext()"
+              :disabled="explorerOffset + explorerLimit >= explorerTotal"
+              class="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-25
+                     disabled:cursor-not-allowed rounded text-xs transition-colors"
+            >Next &#8594;</button>
+          </div>
+        </div>
+
+        <div class="space-y-2">
+          <template x-for="evt in explorerEvents" :key="evt.stream_position">
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-3
+                        hover:border-gray-700 transition-colors">
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <span class="text-gray-700 text-xs font-mono w-8 text-right"
+                    x-text="'#' + evt.stream_position">
+                  </span>
+                  <span :class="eventTypeBadge(evt.event_type)"
+                    class="px-2 py-0.5 rounded text-xs font-medium"
+                    x-text="evt.event_type">
+                  </span>
+                  <span class="text-gray-600 text-xs">v<span x-text="evt.event_version"></span></span>
+                  <span class="text-gray-500 text-xs hidden md:inline"
+                    x-text="'global pos ' + evt.global_position">
+                  </span>
+                </div>
+                <div class="flex items-center gap-2">
+                  <span class="text-gray-700 text-xs" x-text="fmtTime(evt.recorded_at)"></span>
+                  <button
+                    @click="evt.expanded = !evt.expanded"
+                    class="text-gray-600 hover:text-gray-400 text-xs w-4 text-center transition-colors"
+                    x-text="evt.expanded ? '▲' : '▼'"
+                  ></button>
+                </div>
+              </div>
+              <div x-show="evt.expanded" x-cloak class="mt-2 pt-2 border-t border-gray-800">
+                <pre class="text-xs text-gray-400 overflow-x-auto max-h-72 bg-gray-950 rounded p-2"
+                  x-text="JSON.stringify(evt.payload, null, 2)">
+                </pre>
+              </div>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="!loadingExplorer && explorerEvents.length === 0 && explorerStreamId"
+        class="text-center py-16 text-gray-600 text-sm">
+        Stream not found or empty.
+      </div>
+      <div x-show="!explorerStreamId && !loadingExplorer"
+        class="text-center py-16 text-gray-600 text-sm">
+        Enter a stream ID above to browse raw events.
+      </div>
+
+    </div><!-- /events -->
+
+    <!-- ════════════════════════════════════════════════════════════
+         RUN PIPELINE TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'run'" x-cloak>
+
+      <!-- Form -->
+      <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 mb-5 max-w-2xl">
+        <div class="text-gray-400 text-xs tracking-widest mb-4">PIPELINE CONFIGURATION</div>
+        <div class="grid grid-cols-2 gap-4 mb-4">
+          <div>
+            <label class="text-gray-500 text-xs tracking-wider block mb-1">COMPANY ID</label>
+            <select
+              x-model="runCompanyId"
+              :disabled="runStatus === 'running'"
+              class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm
+                     text-gray-200 focus:outline-none focus:border-indigo-500
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              <template x-for="c in runCompanies" :key="c">
+                <option :value="c" x-text="c"></option>
+              </template>
+            </select>
+          </div>
+          <div>
+            <label class="text-gray-500 text-xs tracking-wider block mb-1">AMOUNT (USD)</label>
+            <input
+              type="number"
+              x-model.number="runAmount"
+              :disabled="runStatus === 'running'"
+              step="50000" min="0"
+              class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm
+                     text-gray-200 focus:outline-none focus:border-indigo-500
+                     disabled:opacity-50 disabled:cursor-not-allowed"
+            />
+          </div>
+        </div>
+        <div class="mb-4">
+          <label class="text-gray-500 text-xs tracking-wider block mb-1">
+            APP ID <span class="text-gray-700">(leave blank to auto-generate)</span>
+          </label>
+          <input
+            type="text"
+            x-model="runAppId"
+            :disabled="runStatus === 'running'"
+            placeholder="APEX-DASH-XXXXXX"
+            class="w-full bg-gray-800 border border-gray-700 rounded px-3 py-2 text-sm
+                   text-gray-200 placeholder-gray-700 focus:outline-none focus:border-indigo-500
+                   disabled:opacity-50 disabled:cursor-not-allowed"
+          />
+        </div>
+        <div class="flex items-center gap-4">
+          <button
+            @click="startRun()"
+            :disabled="runStatus === 'running'"
+            class="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-500 disabled:bg-gray-700
+                   disabled:cursor-not-allowed text-white rounded text-sm font-semibold
+                   transition-colors"
+          >
+            <span x-show="runStatus !== 'running'">&#9654; Run Pipeline</span>
+            <span x-show="runStatus === 'running'" class="flex items-center gap-2">
+              <span class="inline-block w-2 h-2 rounded-full bg-indigo-300 animate-pulse"></span>
+              Running...
+            </span>
+          </button>
+          <div x-show="runStatus" class="flex items-center gap-2">
+            <span
+              :class="{
+                'text-yellow-400': runStatus === 'running',
+                'text-green-400':  runStatus === 'done',
+                'text-red-400':    runStatus === 'error',
+              }"
+              class="text-xs font-semibold tracking-wider"
+              x-text="runStatus ? runStatus.toUpperCase() : ''"
+            ></span>
+            <span x-show="runAppIdActual" class="text-gray-500 text-xs"
+              x-text="runAppIdActual"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Terminal output -->
+      <div x-show="runLines.length > 0 || runStatus === 'running'"
+        class="mb-5 bg-gray-950 border border-gray-800 rounded-lg overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800">
+          <span class="text-gray-500 text-xs tracking-wider">OUTPUT</span>
+          <span x-show="runStatus === 'running'"
+            class="text-yellow-400 text-xs animate-pulse">● LIVE</span>
+          <span x-show="runStatus === 'done'" class="text-green-400 text-xs">✓ COMPLETE</span>
+          <span x-show="runStatus === 'error'" class="text-red-400 text-xs">✗ ERROR</span>
+        </div>
+        <div
+          x-ref="terminal"
+          class="p-4 h-80 overflow-y-auto font-mono text-xs leading-relaxed"
+        >
+          <template x-for="(line, i) in runLines" :key="i">
+            <div
+              :class="{
+                'text-green-400':  line.includes('OK') || line.includes('APPROVED') || line.includes('passed'),
+                'text-red-400':    line.includes('FAILED') || line.includes('DECLINED') || line.includes('BLOCK'),
+                'text-yellow-400': line.includes('WARNING') || line.includes('REFER') || line.includes('fallback'),
+                'text-indigo-300': line.startsWith('---') || line.startsWith('  AGENT') || line.startsWith('  SUBMIT') || line.startsWith('  UPLOAD') || line.startsWith('  PIPELINE'),
+                'text-gray-500':   line.includes('[week3_adapter]'),
+                'text-gray-200':   true,
+              }"
+              x-text="line || '\u00a0'"
+            ></div>
+          </template>
+          <div x-show="runStatus === 'running'"
+            class="text-indigo-400 animate-pulse">▌</div>
+        </div>
+      </div>
+
+      <!-- Result summary -->
+      <div x-show="runResult" x-cloak
+        class="bg-gray-900 border border-gray-800 rounded-lg p-5 max-w-3xl">
+        <div class="text-gray-400 text-xs tracking-widest mb-4">FINAL RESULT</div>
+        <div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4">
+          <div class="bg-gray-800 rounded p-3">
+            <div class="text-gray-500 text-xs mb-1">FINAL STATE</div>
+            <div
+              :class="{
+                'text-green-400': (runResult?.final_state ?? '').includes('APPROVED'),
+                'text-red-400':   (runResult?.final_state ?? '').includes('DECLINED'),
+                'text-yellow-400': (runResult?.final_state ?? '').includes('HUMAN'),
+              }"
+              class="font-bold text-sm"
+              x-text="runResult?.final_state ?? '—'"
+            ></div>
+          </div>
+          <div class="bg-gray-800 rounded p-3">
+            <div class="text-gray-500 text-xs mb-1">RISK TIER</div>
+            <div class="font-bold text-sm text-gray-200"
+              x-text="runResult?.agent2?.risk_tier ?? '—'"></div>
+          </div>
+          <div class="bg-gray-800 rounded p-3">
+            <div class="text-gray-500 text-xs mb-1">FRAUD SCORE</div>
+            <div
+              :class="{
+                'text-red-400':    Number(runResult?.agent3?.fraud_score ?? 0) > 0.6,
+                'text-yellow-400': Number(runResult?.agent3?.fraud_score ?? 0) > 0.3,
+                'text-green-400':  Number(runResult?.agent3?.fraud_score ?? 0) <= 0.3,
+              }"
+              class="font-bold text-sm"
+              x-text="runResult?.agent3?.fraud_score != null
+                ? Number(runResult.agent3.fraud_score).toFixed(3) : '—'"
+            ></div>
+          </div>
+          <div class="bg-gray-800 rounded p-3">
+            <div class="text-gray-500 text-xs mb-1">COMPLIANCE</div>
+            <div
+              :class="{
+                'text-green-400': runResult?.agent4?.overall_verdict === 'CLEAR',
+                'text-red-400':   runResult?.agent4?.has_hard_block,
+              }"
+              class="font-bold text-sm"
+              x-text="runResult?.agent4?.overall_verdict ?? '—'"
+            ></div>
+          </div>
+        </div>
+        <div x-show="runResult?.agent5?.executive_summary"
+          class="text-gray-400 text-xs leading-relaxed border-t border-gray-800 pt-3"
+          x-text="runResult?.agent5?.executive_summary">
+        </div>
+        <div class="mt-3 flex gap-2">
+          <button
+            @click="openPipeline(runAppIdActual); activeTab = 'pipeline'"
+            class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-xs transition-colors"
+          >View Event Timeline &#8594;</button>
+        </div>
+      </div>
+
+    </div><!-- /run -->
+
+  </main>
+
+  <!-- ── Alpine.js app ────────────────────────────────────────────── -->
+  <script>
+  function app() {
+    return {
+      activeTab: 'applications',
+      tabs: [
+        { id: 'applications', label: 'Applications' },
+        { id: 'pipeline',     label: 'Pipeline' },
+        { id: 'compliance',   label: 'Compliance' },
+        { id: 'agents',       label: 'Agents' },
+        { id: 'events',       label: 'Event Explorer' },
+        { id: 'run',          label: '▶ Run Pipeline' },
+      ],
+
+      // Applications
+      applications: [],
+      stats: {},
+      searchQuery: '',
+      stateFilter: '',
+      loadingApps: false,
+      lastUpdated: '—',
+
+      // Pipeline
+      selectedAppId: '',
+      pipelineEvents: [],
+      loadingPipeline: false,
+
+      // Compliance
+      complianceAppId: '',
+      complianceRules: [],
+      loadingCompliance: false,
+
+      // Agents
+      agents: [],
+      loadingAgents: false,
+
+      // Event Explorer
+      explorerStreamId: '',
+      explorerEvents: [],
+      explorerTotal: 0,
+      explorerOffset: 0,
+      explorerLimit: 30,
+      loadingExplorer: false,
+
+      // Run Pipeline
+      runCompanies: [],
+      runCompanyId: 'COMP-002',
+      runAmount: 500000,
+      runAppId: '',
+      runJobId: null,
+      runStatus: null,
+      runLines: [],
+      runResult: null,
+      runAppIdActual: '',
+      _runPollTimer: null,
+
+      lagStr: '—',
+
+      // ── Lifecycle ──────────────────────────────────────────────
+
+      async init() {
+        await this.loadApplications()
+        await this.loadStats()
+        await this.loadLag()
+        await this.loadCompanies()
+        setInterval(() => {
+          if (this.activeTab === 'applications') {
+            this.loadApplications()
+            this.loadStats()
+          }
+          this.loadLag()
+        }, 15000)
+      },
+
+      async refresh() {
+        await this.loadApplications()
+        await this.loadStats()
+        await this.loadLag()
+        if (this.activeTab === 'agents') await this.loadAgents()
+        if (this.activeTab === 'pipeline' && this.selectedAppId) await this.loadPipeline()
+        if (this.activeTab === 'compliance' && this.complianceAppId) await this.loadCompliance()
+      },
+
+      async switchTab(tab) {
+        this.activeTab = tab
+        if (tab === 'agents' && this.agents.length === 0) await this.loadAgents()
+      },
+
+      // ── Data loaders ───────────────────────────────────────────
+
+      async loadApplications() {
+        this.loadingApps = true
+        try {
+          const r = await fetch('/api/applications')
+          this.applications = await r.json()
+          this.lastUpdated = new Date().toLocaleTimeString()
+        } catch (e) { console.error(e) }
+        finally { this.loadingApps = false }
+      },
+
+      async loadStats() {
+        try {
+          const r = await fetch('/api/stats')
+          this.stats = await r.json()
+        } catch (e) { console.error(e) }
+      },
+
+      async loadLag() {
+        try {
+          const r = await fetch('/api/lag')
+          const lags = await r.json()
+          const vals = Object.values(lags).filter(v => typeof v === 'number')
+          if (vals.length > 0) {
+            const max = Math.max(...vals)
+            this.lagStr = max === 0 ? 'up to date' : max + ' events behind'
+          }
+        } catch (e) { this.lagStr = '—' }
+      },
+
+      get filteredApps() {
+        return this.applications.filter(a => {
+          const q = this.searchQuery.toLowerCase()
+          const matchQ = !q ||
+            (a.application_id ?? '').toLowerCase().includes(q) ||
+            (a.applicant_id  ?? '').toLowerCase().includes(q)
+          const matchS = !this.stateFilter || a.state === this.stateFilter
+          return matchQ && matchS
+        })
+      },
+
+      openPipeline(appId) {
+        this.selectedAppId = appId
+        this.activeTab = 'pipeline'
+        this.loadPipeline()
+      },
+
+      async loadPipeline() {
+        if (!this.selectedAppId) return
+        this.loadingPipeline = true
+        this.pipelineEvents = []
+        try {
+          const r = await fetch(`/api/applications/${this.selectedAppId}/events`)
+          const evts = await r.json()
+          this.pipelineEvents = evts.map(e => ({ ...e, expanded: false }))
+        } catch (e) { console.error(e) }
+        finally { this.loadingPipeline = false }
+      },
+
+      async loadCompliance() {
+        if (!this.complianceAppId) return
+        this.loadingCompliance = true
+        this.complianceRules = []
+        try {
+          const r = await fetch(`/api/applications/${this.complianceAppId}/compliance`)
+          this.complianceRules = await r.json()
+        } catch (e) { console.error(e) }
+        finally { this.loadingCompliance = false }
+      },
+
+      async loadAgents() {
+        this.loadingAgents = true
+        try {
+          const r = await fetch('/api/agents')
+          this.agents = await r.json()
+        } catch (e) { console.error(e) }
+        finally { this.loadingAgents = false }
+      },
+
+      async loadStream() {
+        if (!this.explorerStreamId.trim()) return
+        this.explorerOffset = 0
+        await this._fetchStream()
+      },
+
+      async explorerNext() {
+        this.explorerOffset += this.explorerLimit
+        await this._fetchStream()
+      },
+
+      async explorerPrev() {
+        this.explorerOffset = Math.max(0, this.explorerOffset - this.explorerLimit)
+        await this._fetchStream()
+      },
+
+      async loadCompanies() {
+        try {
+          const r = await fetch('/api/companies')
+          this.runCompanies = await r.json()
+          if (this.runCompanies.length && !this.runCompanies.includes(this.runCompanyId))
+            this.runCompanyId = this.runCompanies[0]
+        } catch (e) { console.error(e) }
+      },
+
+      async startRun() {
+        if (this.runStatus === 'running') return
+        // Reset
+        this.runLines = []
+        this.runResult = null
+        this.runStatus = 'running'
+        this.runAppIdActual = ''
+        if (this._runPollTimer) clearInterval(this._runPollTimer)
+
+        try {
+          const r = await fetch('/api/pipeline/run', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              company_id: this.runCompanyId,
+              amount:     this.runAmount,
+              app_id:     this.runAppId.trim() || null,
+            }),
+          })
+          const data = await r.json()
+          this.runJobId       = data.job_id
+          this.runAppIdActual = data.app_id
+
+          // Poll every 1.5 s
+          this._runPollTimer = setInterval(() => this._pollRun(), 1500)
+        } catch (e) {
+          this.runStatus = 'error'
+          this.runLines.push('Failed to start pipeline: ' + e)
+        }
+      },
+
+      async _pollRun() {
+        if (!this.runJobId) return
+        try {
+          const r = await fetch(`/api/pipeline/status/${this.runJobId}`)
+          const data = await r.json()
+          this.runLines = data.lines ?? []
+          if (data.status !== 'running') {
+            this.runStatus = data.status
+            this.runResult = data.result
+            if (data.error) this.runLines.push('ERROR: ' + data.error)
+            clearInterval(this._runPollTimer)
+            this._runPollTimer = null
+            // Refresh applications list now that new data is in DB
+            await this.loadApplications()
+            await this.loadStats()
+          }
+          // Auto-scroll terminal
+          this.$nextTick(() => {
+            const t = this.$refs.terminal
+            if (t) t.scrollTop = t.scrollHeight
+          })
+        } catch (e) { console.error(e) }
+      },
+
+      async _fetchStream() {
+        this.loadingExplorer = true
+        this.explorerEvents = []
+        try {
+          const url = `/api/stream/${this.explorerStreamId}?limit=${this.explorerLimit}&offset=${this.explorerOffset}`
+          const r = await fetch(url)
+          const data = await r.json()
+          this.explorerTotal = data.total ?? 0
+          this.explorerEvents = (data.events ?? []).map(e => ({ ...e, expanded: false }))
+        } catch (e) { console.error(e) }
+        finally { this.loadingExplorer = false }
+      },
+
+      // ── Formatting ─────────────────────────────────────────────
+
+      fmtTime(ts) {
+        if (!ts) return '—'
+        try { return new Date(ts).toLocaleString() } catch { return ts }
+      },
+
+      eventSummary(evt) {
+        const p = evt.payload ?? {}
+        switch (evt.event_type) {
+          case 'ApplicationSubmitted':
+            return `${p.applicant_id ?? ''} • $${Number(p.requested_amount_usd ?? 0).toLocaleString()}`
+          case 'DocumentUploaded':
+            return `${p.document_type ?? ''} — ${p.file_name ?? ''}`
+          case 'CreditAnalysisCompleted':
+            return `${p.risk_tier ?? ''} risk • limit $${Number(p.recommended_limit_usd ?? 0).toLocaleString()}`
+          case 'FraudScreeningCompleted':
+            return `score ${Number(p.fraud_score ?? 0).toFixed(3)}`
+          case 'FraudAnomalyDetected':
+            return `[${p.anomaly_type ?? ''}] ${p.description ?? ''}`
+          case 'ComplianceRulePassed':
+            return `${p.rule_id ?? ''} passed`
+          case 'ComplianceRuleFailed':
+            return `${p.rule_id ?? ''} FAILED: ${p.failure_reason ?? ''}`
+          case 'ComplianceCheckCompleted':
+            return `${p.overall_verdict ?? ''} — ${p.rules_passed ?? 0}/${p.rules_evaluated ?? 0} passed`
+          case 'DecisionGenerated':
+            return p.recommendation ?? ''
+          case 'ApplicationApproved':
+            return `$${Number(p.approved_amount_usd ?? 0).toLocaleString()} @ ${p.interest_rate ?? ''}%`
+          case 'ApplicationDeclined':
+            return (p.decline_reasons ?? []).join(', ')
+          case 'AgentContextLoaded':
+            return `agent ${p.agent_id ?? ''}`
+          case 'ExtractionCompleted':
+            return `confidence ${p.overall_confidence ?? ''}`
+          case 'QualityAssessmentCompleted':
+            return `${p.is_coherent ? 'coherent' : 'incoherent'} • confidence ${p.overall_confidence ?? ''}`
+          case 'HumanReviewRequested':
+            return p.reason ?? ''
+          default:
+            return ''
+        }
+      },
+
+      // ── Badge / colour helpers ──────────────────────────────────
+
+      stateBadge(state) {
+        const m = {
+          'FINAL_APPROVED':       'bg-green-900/50 text-green-300',
+          'FINAL_DECLINED':       'bg-red-900/50 text-red-300',
+          'PENDING_HUMAN_REVIEW': 'bg-amber-900/50 text-amber-300',
+          'COMPLIANCE_REVIEW':    'bg-violet-900/50 text-violet-300',
+          'PENDING_DECISION':     'bg-yellow-900/50 text-yellow-300',
+          'AWAITING_ANALYSIS':    'bg-blue-900/50 text-blue-300',
+          'ANALYSIS_COMPLETE':    'bg-sky-900/50 text-sky-300',
+          'SUBMITTED':            'bg-gray-800 text-gray-300',
+        }
+        return m[state] ?? 'bg-gray-800 text-gray-500'
+      },
+
+      riskBadge(tier) {
+        return tier === 'LOW'    ? 'bg-green-900/50 text-green-300' :
+               tier === 'MEDIUM' ? 'bg-yellow-900/50 text-yellow-300' :
+               tier === 'HIGH'   ? 'bg-red-900/50 text-red-300' :
+                                   'bg-gray-800 text-gray-400'
+      },
+
+      fraudColor(score) {
+        const s = Number(score)
+        return s > 0.6 ? 'text-red-400 font-semibold' :
+               s > 0.3 ? 'text-yellow-400' : 'text-green-400'
+      },
+
+      complianceBadge(status) {
+        return status === 'CLEAR'   ? 'bg-green-900/50 text-green-300' :
+               status === 'BLOCKED' ? 'bg-red-900/50 text-red-300' :
+                                      'bg-gray-800 text-gray-400'
+      },
+
+      decisionBadge(decision) {
+        return decision === 'APPROVE' ? 'bg-green-900/50 text-green-300' :
+               decision === 'DECLINE' ? 'bg-red-900/50 text-red-300' :
+               decision === 'REFER'   ? 'bg-yellow-900/50 text-yellow-300' :
+                                        'bg-gray-800 text-gray-400'
+      },
+
+      complianceStatusBadge(status) {
+        return status === 'PASSED'  ? 'bg-green-900/50 text-green-300' :
+               status === 'FAILED'  ? 'bg-red-900/50 text-red-300' :
+               status === 'PENDING' ? 'bg-gray-800 text-gray-400' :
+                                      'bg-violet-900/50 text-violet-300'
+      },
+
+      confidenceColor(score) {
+        const s = Number(score)
+        return s >= 0.7 ? 'text-green-400' :
+               s >= 0.5 ? 'text-yellow-400' : 'text-red-400'
+      },
+
+      eventTypeBadge(type) {
+        if (!type) return 'bg-gray-800 text-gray-500'
+        if (type.includes('Submitted'))              return 'bg-slate-700 text-slate-200'
+        if (type.includes('Uploaded'))               return 'bg-sky-900/60 text-sky-300'
+        if (type.includes('Credit'))                 return 'bg-blue-900/60 text-blue-300'
+        if (type.includes('Fraud') ||
+            type.includes('Anomaly') ||
+            type.includes('Screening'))              return 'bg-orange-900/60 text-orange-300'
+        if (type.includes('Compliance') ||
+            type.includes('Rule'))                   return 'bg-violet-900/60 text-violet-300'
+        if (type.includes('Decision'))               return 'bg-indigo-900/60 text-indigo-300'
+        if (type.includes('Approved'))               return 'bg-green-900/60 text-green-300'
+        if (type.includes('Declined'))               return 'bg-red-900/60 text-red-300'
+        if (type.includes('Review'))                 return 'bg-amber-900/60 text-amber-300'
+        if (type.includes('Context'))                return 'bg-gray-700 text-gray-400'
+        if (type.includes('Extraction') ||
+            type.includes('Quality'))                return 'bg-teal-900/60 text-teal-300'
+        return 'bg-gray-800 text-gray-400'
+      },
+
+      eventDot(type) {
+        if (!type) return 'bg-gray-700 border-gray-600'
+        if (type.includes('Approved'))               return 'bg-green-500 border-green-400'
+        if (type.includes('Declined'))               return 'bg-red-500 border-red-400'
+        if (type.includes('Fraud') ||
+            type.includes('Anomaly'))                return 'bg-orange-500 border-orange-400'
+        if (type.includes('Compliance') ||
+            type.includes('Rule'))                   return 'bg-violet-500 border-violet-400'
+        if (type.includes('Credit'))                 return 'bg-blue-500 border-blue-400'
+        if (type.includes('Decision'))               return 'bg-indigo-500 border-indigo-400'
+        if (type.includes('Context'))                return 'bg-gray-700 border-gray-600'
+        if (type.includes('Extraction') ||
+            type.includes('Quality'))                return 'bg-teal-500 border-teal-400'
+        return 'bg-gray-500 border-gray-400'
+      },
+
+      streamPill(streamId) {
+        if (!streamId) return 'bg-gray-800 text-gray-500'
+        if (streamId.startsWith('loan-'))            return 'bg-blue-900/50 text-blue-400'
+        if (streamId.startsWith('docpkg-'))          return 'bg-teal-900/50 text-teal-400'
+        if (streamId.startsWith('fraud-'))           return 'bg-orange-900/50 text-orange-400'
+        if (streamId.startsWith('compliance-'))      return 'bg-violet-900/50 text-violet-400'
+        if (streamId.startsWith('agent-'))           return 'bg-gray-800 text-gray-500'
+        return 'bg-gray-800 text-gray-500'
+      },
+
+      streamLabel(streamId) {
+        if (!streamId) return '?'
+        if (streamId.startsWith('loan-'))            return 'loan'
+        if (streamId.startsWith('docpkg-'))          return 'docs'
+        if (streamId.startsWith('fraud-'))           return 'fraud'
+        if (streamId.startsWith('compliance-'))      return 'comp'
+        if (streamId.startsWith('agent-'))           return 'agent'
+        return streamId.split('-')[0] ?? streamId
+      },
+    }
+  }
+  </script>
+
+</body>
+</html>
