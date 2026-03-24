@@ -34,9 +34,9 @@ from src.commands.decision_orchestrator import RunOrchestratorCommand, handle_or
 
 
 def _separator(title: str) -> None:
-    print(f"\n{'─' * 55}")
+    print(f"\n{'-' * 55}")
     print(f"  {title}")
-    print(f"{'─' * 55}")
+    print(f"{'-' * 55}")
 
 
 async def run_pipeline(

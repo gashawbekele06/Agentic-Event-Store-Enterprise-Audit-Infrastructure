@@ -13,29 +13,46 @@ Flow:
 """
 from __future__ import annotations
 
+import json
 import os
 import re
+import subprocess
 import sys
 import asyncio
-import threading
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Add Week 3 to Python path ─────────────────────────────────────────────
 _WEEK3_PATH = os.getenv("WEEK3_PROJECT_PATH", "")
-if _WEEK3_PATH and _WEEK3_PATH not in sys.path:
-    sys.path.insert(0, _WEEK3_PATH)
-
-# Week 3 is available if the path is configured and points to a real directory.
-# The actual import happens lazily inside _run() to avoid the `src` namespace
-# conflict that occurs when this project's src.* package is already cached.
 WEEK3_AVAILABLE = bool(_WEEK3_PATH and Path(_WEEK3_PATH).is_dir())
 
-# Lock ensures only one thread swaps sys.modules at a time.
-_week3_import_lock = threading.Lock()
+# ── Subprocess script — runs entirely in Week 3's namespace ───────────────
+# Passed to `python -c`. Braces doubled because it's a .format() template.
+_EXTRACT_SCRIPT = """\
+import sys, json
+sys.path.insert(0, {week3_path!r})
+from src.agents.triage import TriageAgent
+from src.agents.extractor import ExtractionRouter
+from pathlib import Path
+
+path = Path({file_path!r})
+triage = TriageAgent()
+router = ExtractionRouter()
+profile = triage.triage(path)
+doc = router.route(path, profile)
+
+tables = []
+for t in (doc.tables or []):
+    tables.append([[str(c) for c in row] for row in t.rows])
+
+print(json.dumps({{
+    "tables": tables,
+    "full_text": doc.full_text or "",
+    "text_blocks": [b.text for b in (doc.text_blocks or [])],
+}}))
+"""
 
 
 # ── FinancialFacts — matches what DocumentProcessingAgent expects ──────────
@@ -75,49 +92,44 @@ async def extract_balance_sheet(file_path: str) -> FinancialFacts:
 
 async def _extract_via_week3(file_path: str) -> FinancialFacts:
     """
-    Call Week 3 pipeline. Falls back to pdfplumber if Week 3
-    returns empty results or raises an exception.
+    Run Week 3 pipeline in a subprocess so it gets its own clean Python
+    interpreter with no shared sys.modules. Falls back to pdfplumber if
+    the subprocess fails or returns no financially-useful data.
     """
     path = Path(file_path)
     loop = asyncio.get_running_loop()
 
-    def _run():
-        # Swap sys.modules so Week 3's `src` package loads instead of this
-        # project's `src`. The lock serialises concurrent extractions.
-        with _week3_import_lock:
-            saved = {k: sys.modules.pop(k)
-                     for k in list(sys.modules)
-                     if k == "src" or k.startswith("src.")}
-            try:
-                from src.agents.triage import TriageAgent
-                from src.agents.extractor import ExtractionRouter
-                triage  = TriageAgent()
-                router  = ExtractionRouter()
-                profile = triage.triage(path)
-                doc     = router.route(path, profile)
-                return doc
-            finally:
-                for k in [k for k in sys.modules
-                          if k == "src" or k.startswith("src.")]:
-                    del sys.modules[k]
-                sys.modules.update(saved)
+    def _run_subprocess() -> dict:
+        script = _EXTRACT_SCRIPT.format(
+            week3_path=_WEEK3_PATH,
+            file_path=str(path),
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", script],
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or "Week 3 subprocess exited non-zero")
+        return json.loads(result.stdout)
 
     try:
-        doc = await loop.run_in_executor(None, _run)
-        facts = _parse_financial_facts(doc)
+        raw = await loop.run_in_executor(None, _run_subprocess)
+        facts = _parse_financial_facts_from_raw(raw)
         print(f"[week3_adapter] Week 3 extraction OK: {path.name} "
               f"(revenue={facts.total_revenue}, net_income={facts.net_income})")
 
         # If Week 3 returned nothing useful, merge with pdfplumber
         if facts.total_revenue is None and facts.net_income is None:
-            print(f"[week3_adapter] Week 3 returned no financials — merging pdfplumber fallback")
+            print("[week3_adapter] Week 3 returned no financials — merging pdfplumber fallback")
             fallback = await _extract_fallback(file_path)
-            for f in ["total_revenue", "gross_profit", "operating_income",
-                      "ebitda", "net_income", "total_assets",
-                      "total_liabilities", "total_equity"]:
-                if getattr(facts, f) is None and getattr(fallback, f) is not None:
-                    setattr(facts, f, getattr(fallback, f))
-                    facts.field_confidence[f] = fallback.field_confidence.get(f, 0.75)
+            for field_name in ["total_revenue", "gross_profit", "operating_income",
+                               "ebitda", "net_income", "total_assets",
+                               "total_liabilities", "total_equity"]:
+                if getattr(facts, field_name) is None and getattr(fallback, field_name) is not None:
+                    setattr(facts, field_name, getattr(fallback, field_name))
+                    facts.field_confidence[field_name] = fallback.field_confidence.get(field_name, 0.75)
         return facts
 
     except Exception as e:
@@ -125,6 +137,48 @@ async def _extract_via_week3(file_path: str) -> FinancialFacts:
         fallback = await _extract_fallback(file_path)
         fallback.extraction_notes.insert(0, f"Week 3 failed ({e}), used pdfplumber")
         return fallback
+
+
+def _parse_financial_facts_from_raw(raw: dict) -> FinancialFacts:
+    """
+    Parse subprocess JSON output (plain dict with tables/full_text/text_blocks)
+    into FinancialFacts — no ExtractedDocument object needed.
+
+    tables is list[list[list[str]]]: outer = tables, middle = rows, inner = cells.
+    """
+    facts:      dict = {}
+    confidence: dict = {}
+    notes:      list = []
+
+    # ── 1. Parse from tables ──────────────────────────────────────────────
+    for table_rows in raw.get("tables", []):
+        # Each table_rows is a list of rows (list of str); _parse_table_rows
+        # works with plain lists because _parse_table only needs row[0] and row[1:]
+        _parse_table_rows(table_rows, facts, confidence)
+
+    # ── 2. Parse from full text ───────────────────────────────────────────
+    text = raw.get("full_text") or " ".join(raw.get("text_blocks", []))
+    if text:
+        _parse_text(text, facts, confidence, notes)
+
+    # ── 3. Note missing critical fields ───────────────────────────────────
+    for f in ["total_revenue", "net_income", "total_assets"]:
+        if facts.get(f) is None:
+            notes.append(f"{f}: not found in document")
+            confidence[f] = 0.0
+
+    return FinancialFacts(
+        total_revenue     = facts.get("total_revenue"),
+        gross_profit      = facts.get("gross_profit"),
+        operating_income  = facts.get("operating_income"),
+        ebitda            = facts.get("ebitda"),
+        net_income        = facts.get("net_income"),
+        total_assets      = facts.get("total_assets"),
+        total_liabilities = facts.get("total_liabilities"),
+        total_equity      = facts.get("total_equity"),
+        field_confidence  = confidence,
+        extraction_notes  = notes,
+    )
 
 
 def _parse_financial_facts(doc) -> FinancialFacts:
@@ -169,43 +223,47 @@ def _parse_financial_facts(doc) -> FinancialFacts:
     )
 
 
-def _parse_table(table, facts: dict, confidence: dict) -> None:
-    """
-    Extract financial figures from an ExtractedTable.
-    GAAP tables typically have label in col 0, value in col 1 or 2.
-    """
-    LABEL_MAP = {
-        "total revenue":       "total_revenue",
-        "net sales":           "total_revenue",
-        "revenue":             "total_revenue",
-        "gross profit":        "gross_profit",
-        "operating income":    "operating_income",
-        "income from operations": "operating_income",
-        "ebitda":              "ebitda",
-        "net income":          "net_income",
-        "net earnings":        "net_income",
-        "net loss":            "net_income",
-        "total assets":        "total_assets",
-        "total liabilities":   "total_liabilities",
-        "total equity":        "total_equity",
-        "shareholders equity": "total_equity",
-        "stockholders equity": "total_equity",
-    }
+_LABEL_MAP = {
+    "total revenue":          "total_revenue",
+    "net sales":              "total_revenue",
+    "revenue":                "total_revenue",
+    "gross profit":           "gross_profit",
+    "operating income":       "operating_income",
+    "income from operations": "operating_income",
+    "ebitda":                 "ebitda",
+    "net income":             "net_income",
+    "net earnings":           "net_income",
+    "net loss":               "net_income",
+    "total assets":           "total_assets",
+    "total liabilities":      "total_liabilities",
+    "total equity":           "total_equity",
+    "shareholders equity":    "total_equity",
+    "stockholders equity":    "total_equity",
+}
 
-    for row in table.rows:
+
+def _parse_table_rows(rows: list, facts: dict, confidence: dict) -> None:
+    """Parse a plain list-of-rows (list[list[str]]) — used by the subprocess path."""
+    for row in rows:
         if not row:
             continue
         label = str(row[0]).lower().strip()
-
-        for key, field_name in LABEL_MAP.items():
+        for key, field_name in _LABEL_MAP.items():
             if key in label and field_name not in facts:
-                # Find first numeric value in row
                 for cell in row[1:]:
                     val = _to_float(str(cell))
                     if val is not None:
                         facts[field_name] = val
                         confidence[field_name] = 0.85
                         break
+
+
+def _parse_table(table, facts: dict, confidence: dict) -> None:
+    """
+    Extract financial figures from an ExtractedTable.
+    GAAP tables typically have label in col 0, value in col 1 or 2.
+    """
+    _parse_table_rows(table.rows, facts, confidence)
 
 
 def _parse_text(text: str, facts: dict, confidence: dict, notes: list) -> None:
