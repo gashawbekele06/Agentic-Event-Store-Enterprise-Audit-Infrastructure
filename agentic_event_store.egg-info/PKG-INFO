@@ -15,6 +15,7 @@ Requires-Dist: requests>=2.32.5
 Requires-Dist: typer>=0.24.1
 Requires-Dist: rich>=14.3.3
 Requires-Dist: pymupdf>=1.27.2.2
+Requires-Dist: streamlit>=1.55.0
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.25.0; extra == "dev"

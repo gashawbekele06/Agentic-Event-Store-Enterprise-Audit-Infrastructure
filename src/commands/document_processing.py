@@ -344,12 +344,12 @@ def _merge_facts(income: FinancialFacts, balance: FinancialFacts) -> FinancialFa
     Merge income statement and balance sheet facts into a single FinancialFacts.
     Income statement fields take priority for revenue/profit fields.
     Balance sheet fields take priority for asset/liability/equity fields.
+
+    Notes are merged then pruned: "X: not found in document" entries are removed
+    for any field X that is actually populated in the merged result — otherwise
+    the LLM quality check sees contradictory signals and mis-flags present fields.
     """
-    merged_confidence = {**balance.field_confidence, **income.field_confidence}
-    merged_notes = income.extraction_notes + [
-        n for n in balance.extraction_notes if n not in income.extraction_notes
-    ]
-    return FinancialFacts(
+    merged = FinancialFacts(
         total_revenue     = income.total_revenue,
         gross_profit      = income.gross_profit,
         operating_income  = income.operating_income,
@@ -358,9 +358,25 @@ def _merge_facts(income: FinancialFacts, balance: FinancialFacts) -> FinancialFa
         total_assets      = balance.total_assets,
         total_liabilities = balance.total_liabilities,
         total_equity      = balance.total_equity,
-        field_confidence  = merged_confidence,
-        extraction_notes  = merged_notes,
+        field_confidence  = {**balance.field_confidence, **income.field_confidence},
     )
+
+    populated = {
+        f for f in ("total_revenue", "gross_profit", "operating_income", "ebitda",
+                    "net_income", "total_assets", "total_liabilities", "total_equity")
+        if getattr(merged, f) is not None
+    }
+
+    raw_notes = income.extraction_notes + [
+        n for n in balance.extraction_notes if n not in income.extraction_notes
+    ]
+    # Drop "X: not found in document" notes for fields we DID successfully extract
+    merged.extraction_notes = [
+        n for n in raw_notes
+        if not any(n.startswith(f"{f}:") and "not found" in n for f in populated)
+    ]
+
+    return merged
 
 
 def _facts_to_dict(facts: FinancialFacts) -> dict[str, Any]:

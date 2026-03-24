@@ -13,7 +13,11 @@ src/aggregates/audit_ledger.py
 src/aggregates/compliance_record.py
 src/aggregates/loan_application.py
 src/commands/__init__.py
+src/commands/compliance_agent.py
+src/commands/credit_analysis.py
+src/commands/decision_orchestrator.py
 src/commands/document_processing.py
+src/commands/fraud_detection.py
 src/commands/handlers.py
 src/integrity/__init__.py
 src/integrity/audit_chain.py
@@ -29,6 +33,8 @@ src/projections/agent_performance.py
 src/projections/application_summary.py
 src/projections/compliance_audit.py
 src/projections/daemon.py
+src/registry/__init__.py
+src/registry/client.py
 src/regulatory/__init__.py
 src/regulatory/package.py
 src/upcasting/__init__.py
