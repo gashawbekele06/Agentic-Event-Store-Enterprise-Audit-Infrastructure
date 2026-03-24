@@ -50,15 +50,17 @@ If ComplianceRecord events lived in the `loan-{id}` stream:
 
 ### AgentPerformanceLedger Projection
 
-- **Type:** Async
+- **Type:** Async (inline rejected)
 - **SLO:** 2 seconds lag
-- **Justification:** Agent performance metrics are analytical (model monitoring, A/B comparison). A 2-second lag is invisible to operators reviewing dashboards. The projection aggregates across many events (confidence score averages, approve/decline rates), making inline updates expensive — each event would require a read-modify-write on the aggregation row.
+- **Justification:** Agent performance metrics are analytical (model monitoring, A/B comparison). A 2-second lag is invisible to operators reviewing dashboards. **Inline was rejected** because the projection aggregates across many events (confidence score averages, approve/decline rates) — each event would require a read-modify-write on the aggregation row inside the write transaction, adding 3–8ms per append under contention. This cost compounds at 100+ concurrent applications and buys nothing: no automated system reads agent performance metrics in the critical path of a loan decision.
 
 ### ComplianceAuditView Projection (Temporal)
 
-- **Type:** Async
+- **Type:** Async (inline rejected)
 - **SLO:** 2 seconds lag
 - **Snapshot strategy:** Event-count trigger
+
+**Why inline was rejected:** Compliance checks involve external regulation API calls and arrive in bursts (5–6 rule evaluations per application within seconds). An inline projection would execute a projection update inside the same transaction as each `ComplianceRulePassed` / `ComplianceRuleFailed` write. If the projection update fails (e.g., a snapshot write error), it would roll back the compliance event itself — turning a projection maintenance problem into a domain write failure. Async isolation ensures compliance events are never lost due to projection errors.
 
 **Temporal query support:**
 
@@ -126,8 +128,9 @@ Retry 3: 200ms  backoff + jitter (0–100ms)
 
 | New Field          | Inference Strategy                                          | Error Rate                                                  | Downstream Consequence of Error                                                                                                                                                                                                                             |
 | ------------------ | ----------------------------------------------------------- | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `model_version`    | `"legacy-pre-2026"` — deterministic label for all v1 events | **0%** — All v1 events predate model tracking by definition | Performance dashboards show "legacy-pre-2026" as a bucket. Incorrect inference would mix model eras, skewing A/B comparisons                                                                                                                                |
-| `confidence_score` | `None` — null                                               | **0%** (no inference = no error)                            | Consumers must handle `null`. The confidence floor rule (≥0.6) would reject `null` scores — so historical decisions cannot be retroactively re-evaluated against the 0.6 threshold, which is correct (the rule didn't exist when those decisions were made) |
+| `model_version`      | `"legacy-pre-2026"` — deterministic label for all v1 events                                                                                                       | **0%** — All v1 events predate model tracking by definition                                                                              | Performance dashboards show "legacy-pre-2026" as a bucket. Incorrect inference would mix model eras, skewing A/B comparisons                                                                                                                                |
+| `confidence_score`   | `None` — null                                                                                                                                                      | **0%** (no inference = no error)                                                                                                         | Consumers must handle `null`. The confidence floor rule (≥0.6) would reject `null` scores — so historical decisions cannot be retroactively re-evaluated against the 0.6 threshold, which is correct (the rule didn't exist when those decisions were made) |
+| `regulatory_basis`   | Infer from the regulation set version active at `recorded_at` date — look up `regulation_rules` table for rules with `effective_date <= recorded_at` and no `sunset_date`, select the matching set identifier | **~5%** — regulation set boundaries may not align cleanly with `recorded_at` if rules were applied retroactively or if the regulation set changed mid-day | Incorrect `regulatory_basis` means historical compliance re-evaluations reference the wrong rule version. A regulator auditing "all decisions made under REG-2024-Q4" would see events with the wrong basis label — a documentation error, not a decision error, but still a compliance finding. **Null is not chosen here** because the regulation set can be reconstructed from the database with high confidence; fabricating a wrong label is worse than a wrong inference only if the inference is random. The lookup is deterministic. |
 
 **Why null for confidence_score, not an estimated value:**
 
