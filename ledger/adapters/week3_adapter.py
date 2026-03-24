@@ -17,6 +17,7 @@ import os
 import re
 import sys
 import asyncio
+import threading
 from pathlib import Path
 from typing import Optional
 from dotenv import load_dotenv
@@ -28,14 +29,13 @@ _WEEK3_PATH = os.getenv("WEEK3_PROJECT_PATH", "")
 if _WEEK3_PATH and _WEEK3_PATH not in sys.path:
     sys.path.insert(0, _WEEK3_PATH)
 
-# ── Try importing Week 3 ──────────────────────────────────────────────────
-try:
-    from src.agents.triage import TriageAgent
-    from src.agents.extractor import ExtractionRouter
-    WEEK3_AVAILABLE = True
-except ImportError as e:
-    WEEK3_AVAILABLE = False
-    print(f"[week3_adapter] Week 3 not available ({e}), using pdfplumber fallback")
+# Week 3 is available if the path is configured and points to a real directory.
+# The actual import happens lazily inside _run() to avoid the `src` namespace
+# conflict that occurs when this project's src.* package is already cached.
+WEEK3_AVAILABLE = bool(_WEEK3_PATH and Path(_WEEK3_PATH).is_dir())
+
+# Lock ensures only one thread swaps sys.modules at a time.
+_week3_import_lock = threading.Lock()
 
 
 # ── FinancialFacts — matches what DocumentProcessingAgent expects ──────────
@@ -82,11 +82,26 @@ async def _extract_via_week3(file_path: str) -> FinancialFacts:
     loop = asyncio.get_event_loop()
 
     def _run():
-        triage  = TriageAgent()
-        router  = ExtractionRouter()
-        profile = triage.triage(path)
-        doc     = router.route(path, profile)
-        return doc
+        # Swap sys.modules so Week 3's `src` package loads instead of this
+        # project's `src`. The lock serialises concurrent extractions.
+        with _week3_import_lock:
+            saved = {k: sys.modules.pop(k)
+                     for k in list(sys.modules)
+                     if k == "src" or k.startswith("src.")}
+            try:
+                from src.agents.triage import TriageAgent
+                from src.agents.extractor import ExtractionRouter
+                triage  = TriageAgent()
+                router  = ExtractionRouter()
+                profile = triage.triage(path)
+                doc     = router.route(path, profile)
+                return doc
+            finally:
+                # Remove Week 3's src entries, restore this project's.
+                for k in [k for k in sys.modules
+                          if k == "src" or k.startswith("src.")]:
+                    del sys.modules[k]
+                sys.modules.update(saved)
 
     try:
         doc = await loop.run_in_executor(None, _run)

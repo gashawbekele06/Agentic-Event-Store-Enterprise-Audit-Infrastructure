@@ -13,6 +13,7 @@ src/aggregates/audit_ledger.py
 src/aggregates/compliance_record.py
 src/aggregates/loan_application.py
 src/commands/__init__.py
+src/commands/document_processing.py
 src/commands/handlers.py
 src/integrity/__init__.py
 src/integrity/audit_chain.py

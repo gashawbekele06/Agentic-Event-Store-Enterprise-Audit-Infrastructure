@@ -274,6 +274,88 @@ class AgentContextLoaded(BaseEvent):
 
 
 # ---------------------------------------------------------------------------
+# FraudScreening aggregate events  (stream: fraud-{application_id})
+# ---------------------------------------------------------------------------
+
+class FraudAnomalyDetected(BaseEvent):
+    """One anomaly identified during fraud screening."""
+    event_type: str = "FraudAnomalyDetected"
+    application_id: str
+    anomaly_type: str
+    description: str
+    severity: float           # 0.0–1.0 weight used in fraud_score calculation
+    evidence: str = ""
+
+
+# ---------------------------------------------------------------------------
+# ComplianceRecord additional events
+# ---------------------------------------------------------------------------
+
+class ComplianceRuleNoted(BaseEvent):
+    """Informational compliance note — not a pass or fail (used for REG-006 CRA)."""
+    event_type: str = "ComplianceRuleNoted"
+    application_id: str
+    rule_id: str
+    rule_version: str
+    note_type: str
+    note_text: str = ""
+
+
+class ComplianceCheckCompleted(BaseEvent):
+    """Final compliance verdict after all rules evaluated."""
+    event_type: str = "ComplianceCheckCompleted"
+    application_id: str
+    overall_verdict: str       # CLEAR | BLOCKED | CONDITIONAL
+    has_hard_block: bool
+    rules_evaluated: int
+    rules_passed: int
+    rules_failed: int
+    summary: str = ""
+
+
+# ---------------------------------------------------------------------------
+# LoanApplication additional events
+# ---------------------------------------------------------------------------
+
+class HumanReviewRequested(BaseEvent):
+    """Appended when orchestrator recommendation is REFER."""
+    event_type: str = "HumanReviewRequested"
+    application_id: str
+    reason: str = ""
+    orchestrator_agent_id: str = ""
+
+
+# ---------------------------------------------------------------------------
+# DocumentPackage aggregate events  (stream: docpkg-{application_id})
+# ---------------------------------------------------------------------------
+
+class ExtractionCompleted(BaseEvent):
+    """Financial facts extracted from income statement + balance sheet PDFs."""
+    event_type: str = "ExtractionCompleted"
+    application_id: str
+    agent_id: str
+    session_id: str
+    income_facts: dict[str, Any] = Field(default_factory=dict)
+    balance_facts: dict[str, Any] = Field(default_factory=dict)
+    merged_facts: dict[str, Any] = Field(default_factory=dict)
+    overall_confidence: float = 0.0
+    income_pdf_path: str = ""
+    balance_pdf_path: str = ""
+
+
+class QualityAssessmentCompleted(BaseEvent):
+    """LLM coherence check result for extracted financial facts."""
+    event_type: str = "QualityAssessmentCompleted"
+    application_id: str
+    overall_confidence: float
+    is_coherent: bool
+    anomalies: list[str] = Field(default_factory=list)
+    critical_missing_fields: list[str] = Field(default_factory=list)
+    reextraction_recommended: bool = False
+    auditor_notes: str = ""
+
+
+# ---------------------------------------------------------------------------
 # AuditLedger aggregate events  (stream: audit-{entity_type}-{entity_id})
 # ---------------------------------------------------------------------------
 

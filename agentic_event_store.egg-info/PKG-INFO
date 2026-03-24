@@ -5,8 +5,16 @@ Summary: The Ledger — Agentic Event Store & Enterprise Audit Infrastructure fo
 Requires-Python: >=3.12
 Description-Content-Type: text/markdown
 Requires-Dist: asyncpg>=0.30.0
+Requires-Dist: anthropic>=0.30.0
+Requires-Dist: openai>=1.30.0
 Requires-Dist: pydantic>=2.10.0
 Requires-Dist: mcp>=1.0.0
+Requires-Dist: pdfplumber>=0.11.9
+Requires-Dist: pyyaml>=6.0.3
+Requires-Dist: requests>=2.32.5
+Requires-Dist: typer>=0.24.1
+Requires-Dist: rich>=14.3.3
+Requires-Dist: pymupdf>=1.27.2.2
 Provides-Extra: dev
 Requires-Dist: pytest>=8.0.0; extra == "dev"
 Requires-Dist: pytest-asyncio>=0.25.0; extra == "dev"
