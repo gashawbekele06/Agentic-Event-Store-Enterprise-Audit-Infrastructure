@@ -172,6 +172,13 @@ The response header (or JSON envelope) always includes:
 
 The frontend interprets lag > SLO/2 as a visual warning. Lag > SLO triggers an auto-retry. This pattern eliminates the class of bugs where a user makes a decision based on stale data without knowing it's stale.
 
+For MCP tool calls that write and immediately read the same application,
+the command handler returns the new `stream_version` in its response.
+Clients can pass `?min_version=N` to projection resources — if the
+projection's `last_position` has not yet reached N, the resource performs
+a direct stream read (strong-read path) to guarantee read-your-writes
+consistency without waiting for the daemon.
+
 ---
 
 ## 5. The Upcasting Scenario
