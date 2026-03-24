@@ -79,7 +79,7 @@ async def _extract_via_week3(file_path: str) -> FinancialFacts:
     returns empty results or raises an exception.
     """
     path = Path(file_path)
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
 
     def _run():
         # Swap sys.modules so Week 3's `src` package loads instead of this
@@ -97,7 +97,6 @@ async def _extract_via_week3(file_path: str) -> FinancialFacts:
                 doc     = router.route(path, profile)
                 return doc
             finally:
-                # Remove Week 3's src entries, restore this project's.
                 for k in [k for k in sys.modules
                           if k == "src" or k.startswith("src.")]:
                     del sys.modules[k]
@@ -106,21 +105,23 @@ async def _extract_via_week3(file_path: str) -> FinancialFacts:
     try:
         doc = await loop.run_in_executor(None, _run)
         facts = _parse_financial_facts(doc)
+        print(f"[week3_adapter] Week 3 extraction OK: {path.name} "
+              f"(revenue={facts.total_revenue}, net_income={facts.net_income})")
 
-        # If Week 3 returned nothing useful, fall back to pdfplumber
+        # If Week 3 returned nothing useful, merge with pdfplumber
         if facts.total_revenue is None and facts.net_income is None:
+            print(f"[week3_adapter] Week 3 returned no financials — merging pdfplumber fallback")
             fallback = await _extract_fallback(file_path)
-            # Merge: use fallback values for any fields Week 3 missed
-            for field in ["total_revenue", "gross_profit", "operating_income",
-                          "ebitda", "net_income", "total_assets",
-                          "total_liabilities", "total_equity"]:
-                if getattr(facts, field) is None and getattr(fallback, field) is not None:
-                    setattr(facts, field, getattr(fallback, field))
-                    facts.field_confidence[field] = fallback.field_confidence.get(field, 0.75)
+            for f in ["total_revenue", "gross_profit", "operating_income",
+                      "ebitda", "net_income", "total_assets",
+                      "total_liabilities", "total_equity"]:
+                if getattr(facts, f) is None and getattr(fallback, f) is not None:
+                    setattr(facts, f, getattr(fallback, f))
+                    facts.field_confidence[f] = fallback.field_confidence.get(f, 0.75)
         return facts
 
     except Exception as e:
-        # Week 3 failed entirely — use pdfplumber
+        print(f"[week3_adapter] Week 3 failed ({type(e).__name__}: {e}) — using pdfplumber")
         fallback = await _extract_fallback(file_path)
         fallback.extraction_notes.insert(0, f"Week 3 failed ({e}), used pdfplumber")
         return fallback
