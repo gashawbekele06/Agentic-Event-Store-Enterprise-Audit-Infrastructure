@@ -463,12 +463,15 @@ async def handle_generate_decision(
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
     app.assert_compliance_review()
 
-    # Rule 4 — Confidence floor
+    # Rule 4 — Confidence floor (delegated to aggregate)
     recommendation = LoanApplicationAggregate.enforce_confidence_floor(
         cmd.recommendation, cmd.confidence_score
     )
 
-    # Rule 6 — Causal chain enforcement
+    # Rule 6 — Causal chain: load each contributing agent aggregate, then
+    # delegate the invariant check entirely to the loan aggregate so that all
+    # cross-event business rules live inside domain objects, not handlers.
+    agent_aggregates = []
     for session_stream_id in cmd.contributing_agent_sessions:
         parts = session_stream_id.replace("agent-", "", 1).split("-", 1)
         if len(parts) != 2:
@@ -476,14 +479,11 @@ async def handle_generate_decision(
                 f"Invalid agent session stream ID: {session_stream_id}",
                 rule="causal_chain",
             )
-        agent_id, session_id = parts
-        agent = await AgentSessionAggregate.load(store, agent_id, session_id)
-        if not agent.has_decision_for_application(cmd.application_id):
-            raise DomainError(
-                f"Session {session_stream_id} has no decision for application "
-                f"{cmd.application_id} — causal chain violation.",
-                rule="causal_chain",
-            )
+        _agent_id, _session_id = parts
+        agent_aggregates.append(
+            await AgentSessionAggregate.load(store, _agent_id, _session_id)
+        )
+    app.assert_causal_chain_valid(cmd.contributing_agent_sessions, agent_aggregates)
 
     new_events = [
         DecisionGenerated(

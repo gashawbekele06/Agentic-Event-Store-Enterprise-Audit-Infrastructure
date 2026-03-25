@@ -268,3 +268,26 @@ class LoanApplicationAggregate:
                 f"state (currently {self.state})",
                 rule="state_machine",
             )
+
+    def assert_causal_chain_valid(
+        self,
+        contributing_session_stream_ids: list[str],
+        agent_aggregates: list,  # list[AgentSessionAggregate] — avoid circular import
+    ) -> None:
+        """Rule 6 — Every contributing agent session must have produced a decision
+        for this application.  All cross-event invariants are encapsulated here so
+        handlers only need to load the aggregates and delegate.
+        """
+        if len(contributing_session_stream_ids) != len(agent_aggregates):
+            raise DomainError(
+                f"Mismatch between {len(contributing_session_stream_ids)} contributing "
+                f"session IDs and {len(agent_aggregates)} loaded agent aggregates",
+                rule="causal_chain",
+            )
+        for stream_id, agent in zip(contributing_session_stream_ids, agent_aggregates):
+            if not agent.has_decision_for_application(self.application_id):
+                raise DomainError(
+                    f"Session {stream_id} has no decision for application "
+                    f"{self.application_id} — causal chain violation.",
+                    rule="causal_chain",
+                )

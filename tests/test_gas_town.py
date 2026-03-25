@@ -17,6 +17,8 @@ import uuid
 
 import pytest
 
+import json
+
 from src.commands.handlers import (
     CreditAnalysisCompletedCommand,
     StartAgentSessionCommand,
@@ -28,8 +30,9 @@ from src.commands.handlers import (
     SubmitApplicationCommand,
 )
 from src.event_store import EventStore
+from src.integrity.audit_chain import run_integrity_check, verify_chain
 from src.integrity.gas_town import AgentContext, reconstruct_agent_context
-from src.models.events import ApplicationSubmitted, AgentContextLoaded, CreditAnalysisCompleted
+from src.models.events import ApplicationSubmitted, AgentContextLoaded, CreditAnalysisCompleted, CreditAnalysisRequested
 
 
 @pytest.mark.asyncio
@@ -220,3 +223,84 @@ async def test_empty_session_returns_healthy(store: EventStore):
     assert context.session_health_status == "HEALTHY"
     assert context.context_text == "No prior session events found."
     print("✅ Empty session returns healthy context")
+
+
+@pytest.mark.asyncio
+async def test_tamper_detection(store: EventStore):
+    """
+    Directly mutate a stored event payload in the DB, then re-run verify_chain
+    and assert tamper_detected is True.
+
+    This exercises the full detection path:
+      1. Write events to a loan stream.
+      2. Run run_integrity_check() to record the baseline hash.
+      3. UPDATE the first event's payload directly via raw SQL (simulates a
+         post-hoc alteration that bypasses the append-only layer).
+      4. Call verify_chain() — it must recompute the hash from current DB
+         contents and find it differs from the recorded baseline.
+      5. Assert tamper_detected == True.
+    """
+    entity_id = f"tamper-{uuid.uuid4().hex[:8]}"
+    stream_id = f"loan-{entity_id}"
+
+    # 1. Write two events to a loan stream
+    await store.append(
+        stream_id=stream_id,
+        events=[
+            ApplicationSubmitted(
+                application_id=entity_id,
+                applicant_id="tamper-applicant",
+                requested_amount_usd=100_000.0,
+                loan_purpose="test",
+                submission_channel="api",
+            )
+        ],
+        expected_version=-1,
+    )
+    await store.append(
+        stream_id=stream_id,
+        events=[
+            CreditAnalysisRequested(
+                application_id=entity_id,
+                assigned_agent_id="tamper-agent",
+                priority="normal",
+            )
+        ],
+        expected_version=1,
+    )
+
+    # 2. Run integrity check to record the hash baseline in the audit stream
+    baseline = await run_integrity_check(store, "loan", entity_id)
+    assert baseline.chain_valid, "Baseline integrity check must pass before tampering"
+    assert not baseline.tamper_detected
+
+    # 3. Directly mutate the first event's payload in the DB
+    #    (this bypasses the append-only constraint — exactly what an attacker would do)
+    async with store._pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE events
+               SET payload = payload || $1::jsonb
+             WHERE stream_id = $2
+               AND stream_position = 1
+            """,
+            json.dumps({"tampered": True, "requested_amount_usd": 9_999_999.0}),
+            stream_id,
+        )
+
+    # 4. Re-verify — verify_chain recomputes hashes from current DB content
+    #    and compares against the recorded baseline hash
+    report = await verify_chain(store, "loan", entity_id)
+
+    # 5. Tamper must be detected
+    assert report["tamper_detected"] is True, (
+        f"Expected tamper_detected=True after payload mutation.\nReport: {report}"
+    )
+    assert len(report["violations"]) > 0, "Expected at least one violation entry"
+    assert any(v["violation"] == "payload_tampered" for v in report["violations"]), (
+        f"Expected 'payload_tampered' violation, got: {report['violations']}"
+    )
+
+    print("✅ Tamper detection test passed")
+    print(f"   Violations detected: {len(report['violations'])}")
+    print(f"   First violation: {report['violations'][0]}")
