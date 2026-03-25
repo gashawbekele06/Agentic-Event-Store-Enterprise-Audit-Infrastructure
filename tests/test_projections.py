@@ -168,17 +168,19 @@ async def test_projection_lag_slo_under_load(store: EventStore):
             store,
         )
 
-    # Fire all 20 concurrently
+    # Fire all 50 concurrently
     await asyncio.gather(*[submit_and_analyse(app_id) for app_id in app_ids])
 
-    # Run daemon and measure catch-up time
-    elapsed_ms = await _run_daemon_until_caught_up(
-        store, [proj_app, proj_perf, proj_comp], max_wait_ms=5000
+    # Measure ApplicationSummary catch-up time in isolation (SLO: < 500ms)
+    elapsed_app_ms = await _run_daemon_until_caught_up(
+        store, [proj_app], max_wait_ms=5000
     )
+    # Also drain the remaining projections (not SLO-bound here)
+    await _run_daemon_until_caught_up(store, [proj_perf, proj_comp], max_wait_ms=5000)
 
     # Verify SLO
-    assert elapsed_ms < 500, (
-        f"ApplicationSummary SLO VIOLATED: catch-up took {elapsed_ms:.0f}ms (limit: 500ms)"
+    assert elapsed_app_ms < 500, (
+        f"ApplicationSummary SLO VIOLATED: catch-up took {elapsed_app_ms:.0f}ms (limit: 500ms)"
     )
 
     # Verify all apps are in projection
@@ -187,7 +189,7 @@ async def test_projection_lag_slo_under_load(store: EventStore):
         assert row is not None, f"app {app_id} missing from ApplicationSummary"
         assert row["state"] == "ANALYSIS_COMPLETE"
 
-    print(f"✅ Projection lag SLO test passed ({n} concurrent handlers): caught up in {elapsed_ms:.0f}ms < 500ms")
+    print(f"✅ Projection lag SLO test passed ({n} concurrent handlers): ApplicationSummary caught up in {elapsed_app_ms:.0f}ms < 500ms")
 
 
 @pytest.mark.asyncio

@@ -21,8 +21,10 @@ import json
 
 from src.commands.handlers import (
     CreditAnalysisCompletedCommand,
+    FraudScreeningCompletedCommand,
     StartAgentSessionCommand,
     handle_credit_analysis_completed,
+    handle_fraud_screening_completed,
     handle_request_credit_analysis,
     handle_start_agent_session,
     handle_submit_application,
@@ -38,16 +40,30 @@ from src.models.events import ApplicationSubmitted, AgentContextLoaded, CreditAn
 @pytest.mark.asyncio
 async def test_reconstruct_after_simulated_crash(store: EventStore):
     """
-    Simulated crash: start session, append 5 events, discard agent object,
-    reconstruct from store. Verify context is sufficient to continue.
+    Simulated crash: start session, write 5 events to agent stream, discard in-memory
+    state, reconstruct from store only.
+
+    Agent stream event sequence:
+      1. AgentContextLoaded          (session anchor)
+      2. CreditAnalysisCompleted     (app_id_1 — done)
+      3. FraudScreeningCompleted     (app_id_1 — done)
+      4. CreditAnalysisCompleted     (app_id_2 — done)
+      5. CreditAnalysisRequested     (app_id_3 — in-progress at crash)
+
+    Expected recovered context:
+      - last_event_position == 5
+      - pending_work contains app_id_3 (CreditAnalysisRequested with no completion)
+      - session_health_status == NEEDS_RECONCILIATION (last event is in-progress marker)
+      - model_version and context_source are restored
     """
     agent_id = f"agent-credit-{uuid.uuid4().hex[:8]}"
     session_id = f"sess-{uuid.uuid4().hex[:8]}"
     app_id_1 = str(uuid.uuid4())
     app_id_2 = str(uuid.uuid4())
+    app_id_3 = str(uuid.uuid4())
 
-    # --- Set up applications ---
-    for app_id in [app_id_1, app_id_2]:
+    # --- Set up loan stream prerequisites ---
+    for app_id in [app_id_1, app_id_2, app_id_3]:
         await handle_submit_application(
             SubmitApplicationCommand(
                 application_id=app_id,
@@ -66,7 +82,9 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
             store,
         )
 
-    # Event 1: AgentContextLoaded (start session — Gas Town anchor)
+    agent_stream_id = f"agent-{agent_id}-{session_id}"
+
+    # Event 1: AgentContextLoaded (Gas Town anchor)
     await handle_start_agent_session(
         StartAgentSessionCommand(
             agent_id=agent_id,
@@ -79,7 +97,7 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
         store,
     )
 
-    # Events 2-3: First credit analysis
+    # Event 2: CreditAnalysisCompleted for app_id_1
     await handle_credit_analysis_completed(
         CreditAnalysisCompletedCommand(
             application_id=app_id_1,
@@ -95,7 +113,20 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
         store,
     )
 
-    # Events 4-5: Second credit analysis (partial - only context loaded)
+    # Event 3: FraudScreeningCompleted for app_id_1
+    await handle_fraud_screening_completed(
+        FraudScreeningCompletedCommand(
+            application_id=app_id_1,
+            agent_id=agent_id,
+            session_id=session_id,
+            fraud_score=0.05,
+            anomaly_flags=[],
+            screening_model_version="fraud-model-v1.1",
+        ),
+        store,
+    )
+
+    # Event 4: CreditAnalysisCompleted for app_id_2
     await handle_credit_analysis_completed(
         CreditAnalysisCompletedCommand(
             application_id=app_id_2,
@@ -111,17 +142,29 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
         store,
     )
 
+    # Event 5: CreditAnalysisRequested for app_id_3 — injected directly on the agent
+    # stream to simulate a crash between assigning work and completing it.
+    await store.append(
+        stream_id=agent_stream_id,
+        events=[CreditAnalysisRequested(
+            application_id=app_id_3,
+            assigned_agent_id=agent_id,
+            priority="normal",
+        )],
+        expected_version=4,
+    )
+
     # Save recovery identifiers before simulating crash.
-    # In a real deployment these come from a process table, recovery config, or DB scan.
     _recovery_agent_id = agent_id
     _recovery_session_id = session_id
+    _recovery_app_id_3 = app_id_3
 
     # Simulate crash — discard ALL in-memory agent state
     del agent_id
     del session_id
+    del app_id_3
 
     # --- CRASH SIMULATION: reconstruct from store only ---
-    # The key test is that reconstruct_agent_context works WITHOUT the in-memory object.
     context = await reconstruct_agent_context(
         store=store,
         agent_id=_recovery_agent_id,
@@ -129,10 +172,10 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
         token_budget=8000,
     )
 
-    # Verify context contains sufficient information to resume
     assert isinstance(context, AgentContext)
-    assert context.last_event_position >= 2, (
-        f"Last event position {context.last_event_position} is too low — context incomplete"
+
+    assert context.last_event_position == 5, (
+        f"Expected last_event_position=5, got {context.last_event_position}"
     )
     assert context.model_version == "credit-model-v2.3", (
         f"Model version not reconstructed: {context.model_version}"
@@ -141,14 +184,24 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
         f"Context source not reconstructed: {context.context_source}"
     )
     assert len(context.decisions_made) >= 2, (
-        f"Only {len(context.decisions_made)} decisions found — expected 2"
+        f"Only {len(context.decisions_made)} decisions found — expected ≥2"
     )
     assert len(context.applications_processed) >= 1, (
         "No applications_processed in reconstructed context"
     )
-    assert context.session_health_status == "HEALTHY", (
-        f"Unexpected health status: {context.session_health_status}"
+    # app_id_3 was requested but never completed — must appear in pending_work
+    assert len(context.pending_work) > 0, (
+        "pending_work must be non-empty — agent crashed with in-progress work"
     )
+    pending_app_ids = [w["application_id"] for w in context.pending_work]
+    assert _recovery_app_id_3 in pending_app_ids, (
+        f"app_id_3 ({_recovery_app_id_3}) not found in pending_work: {pending_app_ids}"
+    )
+    # Last event was CreditAnalysisRequested → NEEDS_RECONCILIATION
+    assert context.session_health_status == "NEEDS_RECONCILIATION", (
+        f"Expected NEEDS_RECONCILIATION (crash mid-analysis), got: {context.session_health_status}"
+    )
+    assert context.needs_reconciliation_reason is not None
     assert len(context.raw_recent_events) > 0, "No recent events in reconstructed context"
     assert context.context_text, "Context text is empty"
 
@@ -156,6 +209,7 @@ async def test_reconstruct_after_simulated_crash(store: EventStore):
     print(f"   Agent model: {context.model_version}")
     print(f"   Decisions made: {context.decisions_made}")
     print(f"   Applications processed: {context.applications_processed}")
+    print(f"   Pending work: {context.pending_work}")
     print(f"   Health status: {context.session_health_status}")
     print(f"   Last event position: {context.last_event_position}")
     print(f"   Context text preview: {context.context_text[:200]}...")

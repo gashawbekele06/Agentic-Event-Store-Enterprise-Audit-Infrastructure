@@ -513,11 +513,7 @@ async def handle_human_review_completed(
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
     app.assert_pending_decision()
 
-    if cmd.override and not cmd.override_reason:
-        raise DomainError(
-            "override_reason is required when override=True",
-            rule="human_review_override",
-        )
+    app.assert_human_review_override_reason(cmd.override, cmd.override_reason)
 
     new_events = [
         HumanReviewCompleted(
@@ -545,12 +541,7 @@ async def handle_approve_application(
     app = await LoanApplicationAggregate.load(store, cmd.application_id)
     app.assert_can_approve()
 
-    if cmd.approved_amount_usd > (app.recommended_limit_usd or float("inf")):
-        raise DomainError(
-            f"Approved amount {cmd.approved_amount_usd} exceeds agent-assessed "
-            f"maximum {app.recommended_limit_usd}",
-            rule="credit_limit_exceeded",
-        )
+    app.assert_approved_amount_within_limit(cmd.approved_amount_usd)
 
     new_events = [
         ApplicationApproved(

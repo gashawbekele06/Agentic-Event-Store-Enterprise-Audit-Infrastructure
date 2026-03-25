@@ -269,6 +269,24 @@ class LoanApplicationAggregate:
                 rule="state_machine",
             )
 
+    def assert_approved_amount_within_limit(self, approved_amount_usd: float) -> None:
+        """Rule 7 — Approved amount must not exceed agent-assessed recommended limit."""
+        limit = self.recommended_limit_usd
+        if limit is not None and approved_amount_usd > limit:
+            raise DomainError(
+                f"Approved amount {approved_amount_usd} exceeds agent-assessed "
+                f"maximum {limit}",
+                rule="credit_limit_exceeded",
+            )
+
+    def assert_human_review_override_reason(self, override: bool, override_reason: str | None) -> None:
+        """Rule 8 — An override flag without an explanation reason is not permitted."""
+        if override and not override_reason:
+            raise DomainError(
+                "override_reason is required when override=True",
+                rule="human_review_override",
+            )
+
     def assert_causal_chain_valid(
         self,
         contributing_session_stream_ids: list[str],

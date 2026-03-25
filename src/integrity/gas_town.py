@@ -75,9 +75,12 @@ async def reconstruct_agent_context(
     session_health_status = "HEALTHY"
     needs_reconciliation_reason: str | None = None
 
-    # Track started-vs-completed work items for NEEDS_RECONCILIATION detection
-    started_analyses: set[str] = set()
-    completed_analyses: set[str] = set()
+    # Track started-vs-completed work for pending_work population
+    # Maps application_id → {type, position, recorded_at} for each started-but-unfinished task
+    credit_analysis_requests: dict[str, dict[str, Any]] = {}
+    credit_analysis_completions: set[str] = set()
+    fraud_screening_requests: dict[str, dict[str, Any]] = {}
+    fraud_screening_completions: set[str] = set()
 
     last_position = events[-1].stream_position
     summary_lines: list[str] = []
@@ -85,6 +88,7 @@ async def reconstruct_agent_context(
     for event in events:
         et = event.event_type
         p = event.payload
+        ts = event.recorded_at.isoformat() if event.recorded_at else ""
 
         if et == "AgentContextLoaded":
             context_source = p.get("context_source", "fresh")
@@ -94,15 +98,44 @@ async def reconstruct_agent_context(
                 f"tokens={p.get('context_token_count', 0)}"
             )
 
+        elif et == "CreditAnalysisRequested":
+            # Agent was assigned to analyse this application; record as in-progress
+            app_id = p.get("application_id", "")
+            if app_id:
+                credit_analysis_requests[app_id] = {
+                    "application_id": app_id,
+                    "type": "credit_analysis",
+                    "status": "in_progress",
+                    "event_position": event.stream_position,
+                    "recorded_at": ts,
+                }
+            summary_lines.append(
+                f"Credit analysis requested — app={app_id} (in-progress)"
+            )
+
         elif et == "CreditAnalysisCompleted":
             app_id = p.get("application_id", "")
             decisions_made.append("CreditAnalysisCompleted")
             if app_id:
                 applications_processed.append(app_id)
-                completed_analyses.add(app_id)
+                credit_analysis_completions.add(app_id)
             summary_lines.append(
                 f"Credit analysis completed — app={app_id}, risk={p.get('risk_tier')}, "
                 f"confidence={p.get('confidence_score')}"
+            )
+
+        elif et == "FraudScreeningRequested":
+            app_id = p.get("application_id", "")
+            if app_id:
+                fraud_screening_requests[app_id] = {
+                    "application_id": app_id,
+                    "type": "fraud_screening",
+                    "status": "in_progress",
+                    "event_position": event.stream_position,
+                    "recorded_at": ts,
+                }
+            summary_lines.append(
+                f"Fraud screening requested — app={app_id} (in-progress)"
             )
 
         elif et == "FraudScreeningCompleted":
@@ -110,6 +143,7 @@ async def reconstruct_agent_context(
             decisions_made.append("FraudScreeningCompleted")
             if app_id:
                 applications_processed.append(app_id)
+                fraud_screening_completions.add(app_id)
             summary_lines.append(
                 f"Fraud screening completed — app={app_id}, score={p.get('fraud_score')}"
             )
@@ -124,9 +158,15 @@ async def reconstruct_agent_context(
                 f"confidence={p.get('confidence_score')}"
             )
 
-    # Check for NEEDS_RECONCILIATION: work started but not completed
-    # In this context: CreditAnalysisRequested but no CreditAnalysisCompleted in same session
-    # We detect this by checking if the last event is an "in-progress" type
+    # Populate pending_work: any started analysis without a corresponding completion event
+    for app_id, work_item in credit_analysis_requests.items():
+        if app_id not in credit_analysis_completions:
+            pending_work.append(work_item)
+    for app_id, work_item in fraud_screening_requests.items():
+        if app_id not in fraud_screening_completions:
+            pending_work.append(work_item)
+
+    # Check for NEEDS_RECONCILIATION: last event was an in-progress marker with no completion
     last_event_type = events[-1].event_type
     in_progress_types = {"CreditAnalysisRequested", "FraudScreeningRequested", "ComplianceCheckRequested"}
     if last_event_type in in_progress_types:
