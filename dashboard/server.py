@@ -837,177 +837,442 @@ async def get_global_event_types():
 
 # ── Analysis report ───────────────────────────────────────────────────────────
 
+async def _safe_fetch(conn, query: str, *args) -> list:
+    """Run a query and return rows as dicts; return [] on any error."""
+    try:
+        rows = await conn.fetch(query, *args)
+        return [dict(r) for r in rows]
+    except Exception as exc:
+        logger.warning("analysis query skipped: %s", exc)
+        return []
+
+
+async def _safe_fetchrow(conn, query: str, *args) -> dict:
+    """Run a single-row query; return {} on any error."""
+    try:
+        row = await conn.fetchrow(query, *args)
+        return dict(row) if row else {}
+    except Exception as exc:
+        logger.warning("analysis query skipped: %s", exc)
+        return {}
+
+
+def _ts(val) -> str | None:
+    return val.isoformat() if val else None
+
+
 @app.get("/api/analysis")
 async def get_analysis():
     """
-    Comprehensive event-store analysis report pulled directly from the
-    ``events`` table and the projection views.
+    Multi-schema analysis report covering all 12 tables:
 
-    Sections returned:
-      summary          — totals: events, streams, today, last recorded_at
-      event_type_dist  — count + pct per event type, sorted desc
-      daily_volume     — events per calendar day for the last 14 days
-      hourly_volume    — events per hour for the last 24 hours
-      top_streams      — top 15 streams by event count
-      stream_type_dist — stream-prefix breakdown (loan / agent / audit / other)
-      application_funnel — application count per lifecycle state
-      version_dist     — event schema version distribution
-      write_latency    — p50 / p95 / p99 gap between consecutive global positions
-                         (proxy for write cadence, not wall-clock latency)
+    Public schema (event store):
+      events, event_streams, outbox, projection_checkpoints,
+      projection_agent_performance, projection_application_summary,
+      projection_compliance_audit, projection_compliance_audit_snapshots
+
+    applicant_registry schema:
+      companies, financial_history, compliance_flags, loan_relationships
     """
-    try:
-        async with _store._pool.acquire() as conn:
+    async with _store._pool.acquire() as conn:
 
-            # ── Summary ──────────────────────────────────────────────
-            summary_row = await conn.fetchrow(
-                """
-                SELECT
-                    COUNT(*)                                              AS total_events,
-                    COUNT(DISTINCT stream_id)                             AS total_streams,
-                    COUNT(*) FILTER (WHERE recorded_at::date = CURRENT_DATE) AS today_events,
-                    COUNT(*) FILTER (WHERE recorded_at >= NOW() - INTERVAL '1 hour') AS last_hour_events,
-                    MAX(recorded_at)                                      AS last_event_at,
-                    MIN(recorded_at)                                      AS first_event_at
-                FROM events
-                """
-            )
-            summary = dict(summary_row) if summary_row else {}
-            if summary.get("last_event_at"):
-                summary["last_event_at"] = summary["last_event_at"].isoformat()
-            if summary.get("first_event_at"):
-                summary["first_event_at"] = summary["first_event_at"].isoformat()
+        # ════════════════════════════════════════════════════════════
+        # SECTION 1 — EVENT STORE  (public.events)
+        # ════════════════════════════════════════════════════════════
 
-            # ── Event-type distribution ───────────────────────────────
-            type_rows = await conn.fetch(
-                """
-                SELECT event_type,
-                       COUNT(*)                                AS count,
-                       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct
-                FROM events
-                GROUP BY event_type
-                ORDER BY count DESC
-                """
-            )
-            event_type_dist = [
-                {"event_type": r["event_type"], "count": r["count"], "pct": float(r["pct"])}
-                for r in type_rows
-            ]
+        summary = await _safe_fetchrow(conn, """
+            SELECT
+                COUNT(*)                                                    AS total_events,
+                COUNT(DISTINCT stream_id)                                   AS total_streams,
+                COUNT(*) FILTER (WHERE recorded_at::date = CURRENT_DATE)   AS today_events,
+                COUNT(*) FILTER (WHERE recorded_at >= NOW() - INTERVAL '1 hour') AS last_hour_events,
+                MAX(recorded_at)                                            AS last_event_at,
+                MIN(recorded_at)                                            AS first_event_at
+            FROM events
+        """)
+        summary["last_event_at"]  = _ts(summary.pop("last_event_at",  None))
+        summary["first_event_at"] = _ts(summary.pop("first_event_at", None))
 
-            # ── Daily volume — last 14 days ───────────────────────────
-            daily_rows = await conn.fetch(
-                """
-                SELECT TO_CHAR(DATE_TRUNC('day', recorded_at), 'YYYY-MM-DD') AS day,
-                       COUNT(*) AS count
-                FROM events
-                WHERE recorded_at >= NOW() - INTERVAL '14 days'
-                GROUP BY day
-                ORDER BY day
-                """
-            )
-            daily_volume = [{"day": r["day"], "count": r["count"]} for r in daily_rows]
+        event_type_dist = await _safe_fetch(conn, """
+            SELECT event_type,
+                   COUNT(*) AS count,
+                   ROUND(100.0 * COUNT(*) / NULLIF(SUM(COUNT(*)) OVER (), 0), 1) AS pct
+            FROM events
+            GROUP BY event_type
+            ORDER BY count DESC
+        """)
+        for r in event_type_dist:
+            r["pct"] = float(r["pct"] or 0)
 
-            # ── Hourly volume — last 24 hours ─────────────────────────
-            hourly_rows = await conn.fetch(
-                """
-                SELECT TO_CHAR(DATE_TRUNC('hour', recorded_at), 'HH24:MI') AS hour,
-                       COUNT(*) AS count
-                FROM events
-                WHERE recorded_at >= NOW() - INTERVAL '24 hours'
-                GROUP BY hour
-                ORDER BY hour
-                """
-            )
-            hourly_volume = [{"hour": r["hour"], "count": r["count"]} for r in hourly_rows]
+        daily_volume = await _safe_fetch(conn, """
+            SELECT TO_CHAR(DATE_TRUNC('day', recorded_at), 'YYYY-MM-DD') AS day,
+                   COUNT(*) AS count
+            FROM events
+            WHERE recorded_at >= NOW() - INTERVAL '14 days'
+            GROUP BY day ORDER BY day
+        """)
 
-            # ── Top streams ───────────────────────────────────────────
-            stream_rows = await conn.fetch(
-                """
-                SELECT stream_id,
-                       COUNT(*)        AS event_count,
-                       MIN(recorded_at) AS first_event,
-                       MAX(recorded_at) AS last_event
-                FROM events
-                GROUP BY stream_id
-                ORDER BY event_count DESC
-                LIMIT 15
-                """
-            )
-            top_streams = [
-                {
-                    "stream_id":   r["stream_id"],
-                    "event_count": r["event_count"],
-                    "first_event": r["first_event"].isoformat() if r["first_event"] else None,
-                    "last_event":  r["last_event"].isoformat()  if r["last_event"]  else None,
-                }
-                for r in stream_rows
-            ]
+        hourly_volume = await _safe_fetch(conn, """
+            SELECT TO_CHAR(DATE_TRUNC('hour', recorded_at), 'HH24:MI') AS hour,
+                   COUNT(*) AS count
+            FROM events
+            WHERE recorded_at >= NOW() - INTERVAL '24 hours'
+            GROUP BY hour ORDER BY hour
+        """)
 
-            # ── Stream-type distribution (prefix bucketing) ───────────
-            stream_type_rows = await conn.fetch(
-                """
-                SELECT
-                    CASE
-                        WHEN stream_id LIKE 'loan-%'  THEN 'loan'
-                        WHEN stream_id LIKE 'agent-%' THEN 'agent'
-                        WHEN stream_id LIKE 'audit-%' THEN 'audit'
-                        ELSE 'other'
-                    END AS stream_type,
-                    COUNT(DISTINCT stream_id) AS stream_count,
-                    COUNT(*)                  AS event_count
-                FROM events
-                GROUP BY stream_type
-                ORDER BY event_count DESC
-                """
-            )
-            stream_type_dist = [
-                {
-                    "stream_type":  r["stream_type"],
-                    "stream_count": r["stream_count"],
-                    "event_count":  r["event_count"],
-                }
-                for r in stream_type_rows
-            ]
+        version_dist = await _safe_fetch(conn, """
+            SELECT event_version AS version, COUNT(*) AS count
+            FROM events GROUP BY event_version ORDER BY event_version
+        """)
 
-            # ── Application lifecycle funnel ──────────────────────────
-            try:
-                funnel_rows = await conn.fetch(
-                    """
-                    SELECT state, COUNT(*) AS count
-                    FROM projection_application_summary
-                    GROUP BY state
-                    ORDER BY count DESC
-                    """
-                )
-                application_funnel = [
-                    {"state": r["state"], "count": r["count"]} for r in funnel_rows
-                ]
-            except Exception:
-                application_funnel = []
+        top_streams = await _safe_fetch(conn, """
+            SELECT stream_id,
+                   COUNT(*) AS event_count,
+                   MIN(recorded_at) AS first_event,
+                   MAX(recorded_at) AS last_event
+            FROM events
+            GROUP BY stream_id
+            ORDER BY event_count DESC LIMIT 15
+        """)
+        for r in top_streams:
+            r["first_event"] = _ts(r.pop("first_event", None))
+            r["last_event"]  = _ts(r.pop("last_event",  None))
 
-            # ── Schema version distribution ───────────────────────────
-            version_rows = await conn.fetch(
-                """
-                SELECT event_version, COUNT(*) AS count
-                FROM events
-                GROUP BY event_version
-                ORDER BY event_version
-                """
-            )
-            version_dist = [
-                {"version": r["event_version"], "count": r["count"]} for r in version_rows
-            ]
+        stream_type_dist = await _safe_fetch(conn, """
+            SELECT
+                CASE
+                    WHEN stream_id LIKE 'loan-%'  THEN 'loan'
+                    WHEN stream_id LIKE 'agent-%' THEN 'agent'
+                    WHEN stream_id LIKE 'audit-%' THEN 'audit'
+                    ELSE 'other'
+                END AS stream_type,
+                COUNT(DISTINCT stream_id) AS stream_count,
+                COUNT(*)                  AS event_count
+            FROM events
+            GROUP BY stream_type ORDER BY event_count DESC
+        """)
 
-        return _resp({
-            "summary":            summary,
-            "event_type_dist":    event_type_dist,
-            "daily_volume":       daily_volume,
-            "hourly_volume":      hourly_volume,
-            "top_streams":        top_streams,
-            "stream_type_dist":   stream_type_dist,
-            "application_funnel": application_funnel,
-            "version_dist":       version_dist,
-        })
+        # ════════════════════════════════════════════════════════════
+        # SECTION 2 — STREAM REGISTRY  (public.event_streams)
+        # ════════════════════════════════════════════════════════════
 
-    except Exception as e:
-        logger.error("get_analysis failed: %s", e)
-        raise HTTPException(500, f"Analysis query failed: {e}")
+        stream_registry = await _safe_fetchrow(conn, """
+            SELECT
+                COUNT(*)                                       AS total_streams,
+                COUNT(*) FILTER (WHERE archived_at IS NULL)   AS active_streams,
+                COUNT(*) FILTER (WHERE archived_at IS NOT NULL) AS archived_streams,
+                MAX(created_at)                                AS latest_stream_at
+            FROM event_streams
+        """)
+        stream_registry["latest_stream_at"] = _ts(stream_registry.pop("latest_stream_at", None))
+
+        aggregate_type_dist = await _safe_fetch(conn, """
+            SELECT aggregate_type,
+                   COUNT(*) AS stream_count,
+                   SUM(current_version) AS total_events_in_streams
+            FROM event_streams
+            GROUP BY aggregate_type ORDER BY stream_count DESC
+        """)
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 3 — OUTBOX  (public.outbox)
+        # ════════════════════════════════════════════════════════════
+
+        outbox_summary = await _safe_fetchrow(conn, """
+            SELECT
+                COUNT(*) AS total_messages,
+                COUNT(*) FILTER (WHERE published_at IS NOT NULL) AS published,
+                COUNT(*) FILTER (WHERE published_at IS NULL)     AS pending,
+                MAX(attempts)                                     AS max_attempts,
+                ROUND(AVG(attempts), 1)                          AS avg_attempts
+            FROM outbox
+        """)
+        outbox_dest_dist = await _safe_fetch(conn, """
+            SELECT destination, COUNT(*) AS count,
+                   COUNT(*) FILTER (WHERE published_at IS NULL) AS pending
+            FROM outbox GROUP BY destination ORDER BY count DESC
+        """)
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 4 — PROJECTION HEALTH  (public.projection_checkpoints)
+        # ════════════════════════════════════════════════════════════
+
+        checkpoint_rows = await _safe_fetch(conn, """
+            SELECT projection_name, last_position,
+                   updated_at,
+                   (SELECT MAX(global_position) FROM events) - last_position AS lag_events
+            FROM projection_checkpoints ORDER BY projection_name
+        """)
+        for r in checkpoint_rows:
+            r["updated_at"] = _ts(r.pop("updated_at", None))
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 5 — APPLICATION SUMMARY  (public.projection_application_summary)
+        # ════════════════════════════════════════════════════════════
+
+        application_funnel = await _safe_fetch(conn, """
+            SELECT state, COUNT(*) AS count
+            FROM projection_application_summary
+            GROUP BY state ORDER BY count DESC
+        """)
+
+        app_financials = await _safe_fetchrow(conn, """
+            SELECT
+                ROUND(AVG(requested_amount_usd), 0)   AS avg_requested_usd,
+                ROUND(AVG(approved_amount_usd), 0)    AS avg_approved_usd,
+                MAX(requested_amount_usd)             AS max_requested_usd,
+                ROUND(AVG(fraud_score), 3)            AS avg_fraud_score,
+                COUNT(*) FILTER (WHERE fraud_score > 0.6) AS high_fraud_count
+            FROM projection_application_summary
+        """)
+        for k, v in list(app_financials.items()):
+            app_financials[k] = float(v) if v is not None else None
+
+        risk_tier_dist = await _safe_fetch(conn, """
+            SELECT risk_tier, COUNT(*) AS count
+            FROM projection_application_summary
+            WHERE risk_tier IS NOT NULL
+            GROUP BY risk_tier ORDER BY count DESC
+        """)
+
+        decision_dist = await _safe_fetch(conn, """
+            SELECT decision, COUNT(*) AS count
+            FROM projection_application_summary
+            WHERE decision IS NOT NULL
+            GROUP BY decision ORDER BY count DESC
+        """)
+
+        compliance_status_dist = await _safe_fetch(conn, """
+            SELECT compliance_status, COUNT(*) AS count
+            FROM projection_application_summary
+            GROUP BY compliance_status ORDER BY count DESC
+        """)
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 6 — AGENT PERFORMANCE  (public.projection_agent_performance)
+        # ════════════════════════════════════════════════════════════
+
+        agent_summary = await _safe_fetchrow(conn, """
+            SELECT
+                COUNT(DISTINCT agent_id)              AS total_agents,
+                SUM(analyses_completed)               AS total_analyses,
+                SUM(decisions_generated)              AS total_decisions,
+                ROUND(AVG(avg_confidence_score), 3)   AS overall_avg_confidence,
+                ROUND(AVG(avg_duration_ms), 0)        AS overall_avg_duration_ms,
+                SUM(human_override_count)             AS total_overrides
+            FROM projection_agent_performance
+        """)
+        for k, v in list(agent_summary.items()):
+            agent_summary[k] = float(v) if v is not None else None
+
+        top_agents = await _safe_fetch(conn, """
+            SELECT agent_id, model_version,
+                   analyses_completed, decisions_generated,
+                   ROUND(avg_confidence_score, 3) AS avg_confidence,
+                   approve_count, decline_count, refer_count,
+                   human_override_count,
+                   last_seen_at
+            FROM projection_agent_performance
+            ORDER BY analyses_completed DESC LIMIT 10
+        """)
+        for r in top_agents:
+            r["last_seen_at"] = _ts(r.pop("last_seen_at", None))
+            r["avg_confidence"] = float(r["avg_confidence"]) if r["avg_confidence"] else None
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 7 — COMPLIANCE AUDIT  (public.projection_compliance_audit)
+        # ════════════════════════════════════════════════════════════
+
+        compliance_audit_summary = await _safe_fetchrow(conn, """
+            SELECT
+                COUNT(*)                                           AS total_checks,
+                COUNT(*) FILTER (WHERE status = 'PASSED')         AS passed,
+                COUNT(*) FILTER (WHERE status = 'FAILED')         AS failed,
+                COUNT(*) FILTER (WHERE status = 'PENDING')        AS pending,
+                COUNT(DISTINCT application_id)                    AS apps_evaluated,
+                COUNT(DISTINCT rule_id)                           AS unique_rules
+            FROM projection_compliance_audit
+        """)
+
+        rule_pass_rates = await _safe_fetch(conn, """
+            SELECT rule_id,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE status = 'PASSED') AS passed,
+                   COUNT(*) FILTER (WHERE status = 'FAILED') AS failed,
+                   ROUND(100.0 * COUNT(*) FILTER (WHERE status = 'PASSED')
+                         / NULLIF(COUNT(*), 0), 1) AS pass_rate_pct
+            FROM projection_compliance_audit
+            GROUP BY rule_id ORDER BY total DESC LIMIT 10
+        """)
+        for r in rule_pass_rates:
+            r["pass_rate_pct"] = float(r["pass_rate_pct"] or 0)
+
+        compliance_snapshots_summary = await _safe_fetchrow(conn, """
+            SELECT COUNT(*) AS total_snapshots,
+                   COUNT(DISTINCT application_id) AS apps_with_snapshots,
+                   MAX(snapshot_at) AS latest_snapshot_at
+            FROM projection_compliance_audit_snapshots
+        """)
+        compliance_snapshots_summary["latest_snapshot_at"] = _ts(
+            compliance_snapshots_summary.pop("latest_snapshot_at", None)
+        )
+
+        # ════════════════════════════════════════════════════════════
+        # SECTION 8 — APPLICANT REGISTRY  (applicant_registry.*)
+        # ════════════════════════════════════════════════════════════
+
+        registry_summary = await _safe_fetchrow(conn, """
+            SELECT COUNT(*) AS total_companies,
+                   COUNT(DISTINCT sector) AS sectors,
+                   COUNT(DISTINCT jurisdiction) AS jurisdictions
+            FROM applicant_registry.companies
+        """)
+
+        sector_dist = await _safe_fetch(conn, """
+            SELECT sector, COUNT(*) AS count
+            FROM applicant_registry.companies
+            WHERE sector IS NOT NULL
+            GROUP BY sector ORDER BY count DESC
+        """)
+
+        registry_risk_tier_dist = await _safe_fetch(conn, """
+            SELECT risk_tier, COUNT(*) AS count
+            FROM applicant_registry.companies
+            WHERE risk_tier IS NOT NULL
+            GROUP BY risk_tier ORDER BY count DESC
+        """)
+
+        trajectory_dist = await _safe_fetch(conn, """
+            SELECT trajectory, COUNT(*) AS count
+            FROM applicant_registry.companies
+            WHERE trajectory IS NOT NULL
+            GROUP BY trajectory ORDER BY count DESC
+        """)
+
+        top_jurisdictions = await _safe_fetch(conn, """
+            SELECT jurisdiction, COUNT(*) AS count
+            FROM applicant_registry.companies
+            WHERE jurisdiction IS NOT NULL
+            GROUP BY jurisdiction ORDER BY count DESC LIMIT 10
+        """)
+
+        legal_type_dist = await _safe_fetch(conn, """
+            SELECT legal_type, COUNT(*) AS count
+            FROM applicant_registry.companies
+            WHERE legal_type IS NOT NULL
+            GROUP BY legal_type ORDER BY count DESC
+        """)
+
+        # ── Compliance flags ──────────────────────────────────────
+        flags_summary = await _safe_fetchrow(conn, """
+            SELECT COUNT(*) AS total_flags,
+                   COUNT(*) FILTER (WHERE is_active) AS active_flags,
+                   COUNT(DISTINCT company_id) AS companies_flagged
+            FROM applicant_registry.compliance_flags
+        """)
+
+        flag_type_dist = await _safe_fetch(conn, """
+            SELECT flag_type,
+                   COUNT(*) AS total,
+                   COUNT(*) FILTER (WHERE is_active) AS active
+            FROM applicant_registry.compliance_flags
+            GROUP BY flag_type ORDER BY total DESC
+        """)
+
+        # ── Financial history ─────────────────────────────────────
+        financials_summary = await _safe_fetchrow(conn, """
+            SELECT COUNT(*) AS total_records,
+                   COUNT(DISTINCT company_id) AS companies_with_financials,
+                   COUNT(DISTINCT fiscal_year) AS fiscal_years,
+                   ROUND(AVG(total_revenue), 0) AS avg_revenue,
+                   ROUND(AVG(net_income), 0) AS avg_net_income,
+                   ROUND(AVG(ebitda_margin_pct), 1) AS avg_ebitda_margin
+            FROM applicant_registry.financial_history
+        """)
+        for k, v in list(financials_summary.items()):
+            financials_summary[k] = float(v) if v is not None else None
+
+        revenue_by_sector = await _safe_fetch(conn, """
+            SELECT c.sector,
+                   ROUND(AVG(f.total_revenue), 0) AS avg_revenue,
+                   ROUND(AVG(f.ebitda_margin_pct), 1) AS avg_ebitda_margin,
+                   COUNT(DISTINCT f.company_id) AS company_count
+            FROM applicant_registry.financial_history f
+            JOIN applicant_registry.companies c USING (company_id)
+            WHERE c.sector IS NOT NULL
+            GROUP BY c.sector ORDER BY avg_revenue DESC NULLS LAST
+        """)
+        for r in revenue_by_sector:
+            r["avg_revenue"] = float(r["avg_revenue"]) if r["avg_revenue"] else None
+            r["avg_ebitda_margin"] = float(r["avg_ebitda_margin"]) if r["avg_ebitda_margin"] else None
+
+        # ── Loan relationships ────────────────────────────────────
+        loan_summary = await _safe_fetchrow(conn, """
+            SELECT COUNT(*) AS total_loans,
+                   COUNT(DISTINCT company_id) AS borrowers,
+                   ROUND(AVG(loan_amount_usd), 0) AS avg_loan_usd,
+                   SUM(loan_amount_usd) AS total_loan_usd,
+                   COUNT(*) FILTER (WHERE default_occurred) AS defaults,
+                   ROUND(100.0 * COUNT(*) FILTER (WHERE default_occurred)
+                         / NULLIF(COUNT(*), 0), 1) AS default_rate_pct
+            FROM applicant_registry.loan_relationships
+        """)
+        for k, v in list(loan_summary.items()):
+            loan_summary[k] = float(v) if v is not None else None
+
+        loan_status_dist = await _safe_fetch(conn, """
+            SELECT status,
+                   COUNT(*) AS count,
+                   COUNT(*) FILTER (WHERE default_occurred) AS defaults
+            FROM applicant_registry.loan_relationships
+            WHERE status IS NOT NULL
+            GROUP BY status ORDER BY count DESC
+        """)
+
+    return _resp({
+        # Event store — public.events
+        "summary":           summary,
+        "event_type_dist":   event_type_dist,
+        "daily_volume":      daily_volume,
+        "hourly_volume":     hourly_volume,
+        "version_dist":      version_dist,
+        "top_streams":       top_streams,
+        "stream_type_dist":  stream_type_dist,
+        # Stream registry — public.event_streams
+        "stream_registry":       stream_registry,
+        "aggregate_type_dist":   aggregate_type_dist,
+        # Outbox — public.outbox
+        "outbox_summary":    outbox_summary,
+        "outbox_dest_dist":  outbox_dest_dist,
+        # Projection health — public.projection_checkpoints
+        "checkpoints":       checkpoint_rows,
+        # Application summary — public.projection_application_summary
+        "application_funnel":     application_funnel,
+        "app_financials":         app_financials,
+        "risk_tier_dist":         risk_tier_dist,
+        "decision_dist":          decision_dist,
+        "compliance_status_dist": compliance_status_dist,
+        # Agent performance — public.projection_agent_performance
+        "agent_summary":     agent_summary,
+        "top_agents":        top_agents,
+        # Compliance audit — public.projection_compliance_audit + snapshots
+        "compliance_audit_summary":       compliance_audit_summary,
+        "rule_pass_rates":                rule_pass_rates,
+        "compliance_snapshots_summary":   compliance_snapshots_summary,
+        # applicant_registry.companies
+        "registry_summary":        registry_summary,
+        "sector_dist":             sector_dist,
+        "registry_risk_tier_dist": registry_risk_tier_dist,
+        "trajectory_dist":         trajectory_dist,
+        "top_jurisdictions":       top_jurisdictions,
+        "legal_type_dist":         legal_type_dist,
+        # applicant_registry.compliance_flags
+        "flags_summary":    flags_summary,
+        "flag_type_dist":   flag_type_dist,
+        # applicant_registry.financial_history
+        "financials_summary":  financials_summary,
+        "revenue_by_sector":   revenue_by_sector,
+        # applicant_registry.loan_relationships
+        "loan_summary":      loan_summary,
+        "loan_status_dist":  loan_status_dist,
+    })

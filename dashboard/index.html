@@ -1030,8 +1030,8 @@
       <!-- Toolbar -->
       <div class="flex items-center justify-between mb-5">
         <div>
-          <h2 class="text-white font-semibold text-sm tracking-widest uppercase">Event Store Analysis</h2>
-          <p class="text-gray-600 text-xs mt-0.5">Live report from the <code class="text-indigo-400">events</code> table</p>
+          <h2 class="text-white font-semibold text-sm tracking-widest uppercase">Analysis Report</h2>
+          <p class="text-gray-600 text-xs mt-0.5">Live report across all tables — <code class="text-indigo-400">public</code> schema (8 tables) · <code class="text-indigo-400">applicant_registry</code> schema (4 tables)</p>
         </div>
         <button
           @click="loadAnalysis()"
@@ -1051,259 +1051,737 @@
       </div>
 
       <!-- Report body -->
-      <div x-show="!loadingAnalysis && analysis" class="space-y-6">
+      <div x-show="!loadingAnalysis && analysis" class="space-y-8">
 
-        <!-- ── Row 1: Summary KPI cards ─────────────────────────── -->
-        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
 
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <div class="text-gray-500 text-xs tracking-widest mb-1">TOTAL EVENTS</div>
-            <div class="text-3xl font-bold text-white"
-              x-text="(analysis?.summary?.total_events ?? 0).toLocaleString()"></div>
+        <!-- ══════════════════════════════════════════════════════
+             SECTION 1 — EVENT STORE  (public.events)
+        ══════════════════════════════════════════════════════ -->
+        <div>
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-1 h-5 bg-indigo-500 rounded"></div>
+            <h3 class="text-indigo-400 text-xs font-bold tracking-widest uppercase">Event Store — public.events</h3>
           </div>
 
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <div class="text-gray-500 text-xs tracking-widest mb-1">STREAMS</div>
-            <div class="text-3xl font-bold text-indigo-400"
-              x-text="(analysis?.summary?.total_streams ?? 0).toLocaleString()"></div>
-          </div>
-
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <div class="text-gray-500 text-xs tracking-widest mb-1">TODAY</div>
-            <div class="text-3xl font-bold text-green-400"
-              x-text="(analysis?.summary?.today_events ?? 0).toLocaleString()"></div>
-          </div>
-
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-            <div class="text-gray-500 text-xs tracking-widest mb-1">LAST HOUR</div>
-            <div class="text-3xl font-bold text-cyan-400"
-              x-text="(analysis?.summary?.last_hour_events ?? 0).toLocaleString()"></div>
-          </div>
-
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 col-span-2">
-            <div class="text-gray-500 text-xs tracking-widest mb-1">LAST EVENT</div>
-            <div class="text-sm font-mono text-gray-300"
-              x-text="analysis?.summary?.last_event_at ? fmtTime(analysis.summary.last_event_at) : '—'"></div>
-            <div class="text-gray-600 text-xs mt-1">
-              First: <span x-text="analysis?.summary?.first_event_at ? fmtTime(analysis.summary.first_event_at) : '—'"></span>
+          <!-- KPI row -->
+          <div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 mb-4">
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">TOTAL EVENTS</div>
+              <div class="text-3xl font-bold text-white" x-text="(analysis?.summary?.total_events ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">STREAMS</div>
+              <div class="text-3xl font-bold text-indigo-400" x-text="(analysis?.summary?.total_streams ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">TODAY</div>
+              <div class="text-3xl font-bold text-green-400" x-text="(analysis?.summary?.today_events ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">LAST HOUR</div>
+              <div class="text-3xl font-bold text-cyan-400" x-text="(analysis?.summary?.last_hour_events ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">ACTIVE STREAMS</div>
+              <div class="text-3xl font-bold text-purple-400" x-text="(analysis?.stream_registry?.active_streams ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">OUTBOX PENDING</div>
+              <div class="text-3xl font-bold" :class="(analysis?.outbox_summary?.pending ?? 0) > 0 ? 'text-yellow-400' : 'text-gray-500'"
+                x-text="(analysis?.outbox_summary?.pending ?? 0).toLocaleString()"></div>
             </div>
           </div>
 
-        </div>
-
-        <!-- ── Row 2: Event-type distribution + Stream-type dist ─── -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-          <!-- Event type distribution -->
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-            <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Event Type Distribution</h3>
-            <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
-              <template x-for="(et, idx) in (analysis?.event_type_dist ?? [])" :key="et.event_type">
-                <div>
-                  <div class="flex items-center justify-between mb-0.5">
-                    <span class="text-gray-300 text-xs font-mono truncate max-w-48"
-                      x-text="et.event_type"></span>
-                    <span class="text-gray-500 text-xs ml-2 whitespace-nowrap">
-                      <span x-text="et.count.toLocaleString()"></span>
-                      <span class="text-gray-700 ml-1">(<span x-text="et.pct"></span>%)</span>
-                    </span>
-                  </div>
-                  <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-                    <div
-                      class="h-full rounded-full transition-all duration-500"
-                      :class="typeBarColor(idx)"
-                      :style="'width:' + barPct(et.count, analysis.event_type_dist[0]?.count ?? 1)"
-                    ></div>
-                  </div>
-                </div>
-              </template>
-              <div x-show="!analysis?.event_type_dist?.length"
-                class="text-gray-600 text-xs py-4">No events recorded yet.</div>
-            </div>
-          </div>
-
-          <!-- Stream type breakdown + version dist stacked -->
-          <div class="space-y-5">
-
-            <!-- Stream-type breakdown -->
+          <!-- Charts row: daily volume + event type dist -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <!-- Daily volume -->
             <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-              <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Stream Type Breakdown</h3>
-              <div class="space-y-3">
-                <template x-for="st in (analysis?.stream_type_dist ?? [])" :key="st.stream_type">
-                  <div class="flex items-center gap-3">
-                    <span class="text-gray-400 text-xs font-mono w-12 text-right" x-text="st.stream_type"></span>
-                    <div class="flex-1 h-3 bg-gray-800 rounded-full overflow-hidden">
-                      <div
-                        class="h-full bg-indigo-600 rounded-full transition-all duration-500"
-                        :style="'width:' + barPct(st.event_count, (analysis.stream_type_dist[0]?.event_count ?? 1))"
-                      ></div>
-                    </div>
-                    <span class="text-gray-400 text-xs w-20 text-right whitespace-nowrap">
-                      <span x-text="st.event_count.toLocaleString()"></span>
-                      <span class="text-gray-700"> evts</span>
-                    </span>
-                    <span class="text-gray-600 text-xs w-14 text-right whitespace-nowrap"
-                      x-text="st.stream_count + ' streams'"></span>
-                  </div>
-                </template>
-                <div x-show="!analysis?.stream_type_dist?.length"
-                  class="text-gray-600 text-xs">No stream data.</div>
+              <div class="flex items-center justify-between mb-3">
+                <h4 class="text-gray-400 text-xs tracking-widest uppercase">Daily Volume — Last 14 Days</h4>
+                <span class="text-gray-600 text-xs font-mono"
+                  x-text="analysis?.daily_volume?.length ? analysis.daily_volume.reduce((s,d)=>s+d.count,0).toLocaleString() + ' total' : ''"></span>
               </div>
-            </div>
-
-            <!-- Schema version distribution -->
-            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-              <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Schema Version Distribution</h3>
-              <div class="flex flex-wrap gap-3">
-                <template x-for="v in (analysis?.version_dist ?? [])" :key="v.version">
-                  <div class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-center">
-                    <div class="text-indigo-400 font-bold text-lg" x-text="'v' + v.version"></div>
-                    <div class="text-gray-500 text-xs" x-text="v.count.toLocaleString() + ' events'"></div>
-                  </div>
-                </template>
-                <div x-show="!analysis?.version_dist?.length"
-                  class="text-gray-600 text-xs">No version data.</div>
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-        <!-- ── Row 3: Daily volume bar chart (14 days) ─────────────── -->
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-          <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Daily Event Volume — Last 14 Days</h3>
-          <div x-show="analysis?.daily_volume?.length">
-            <div class="flex items-end gap-1 h-28">
-              <template x-for="d in (analysis?.daily_volume ?? [])" :key="d.day">
-                <div class="flex-1 flex flex-col items-center gap-1 group relative">
-                  <div
-                    class="w-full bg-indigo-600 hover:bg-indigo-500 rounded-t transition-all cursor-default"
-                    :style="'height:' + barPct(d.count, Math.max(...(analysis.daily_volume.map(x => x.count) ?? [1])))"
-                    :title="d.day + ': ' + d.count + ' events'"
-                  ></div>
-                  <!-- Tooltip on hover -->
-                  <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-700
-                              text-xs text-gray-300 px-2 py-1 rounded whitespace-nowrap hidden group-hover:block z-10 pointer-events-none">
-                    <span x-text="d.day"></span><br>
-                    <span class="font-bold text-indigo-400" x-text="d.count.toLocaleString()"></span> events
-                  </div>
-                </div>
-              </template>
-            </div>
-            <!-- X-axis labels: first + last -->
-            <div class="flex justify-between text-gray-600 text-xs mt-1 font-mono">
-              <span x-text="analysis?.daily_volume?.[0]?.day ?? ''"></span>
-              <span x-text="analysis?.daily_volume?.[analysis.daily_volume.length - 1]?.day ?? ''"></span>
-            </div>
-          </div>
-          <div x-show="!analysis?.daily_volume?.length" class="text-gray-600 text-xs py-6">
-            No data for the last 14 days.
-          </div>
-        </div>
-
-        <!-- ── Row 4: Hourly volume (last 24 h) + Application funnel ── -->
-        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
-
-          <!-- Hourly volume -->
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-            <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Hourly Volume — Last 24 Hours</h3>
-            <div x-show="analysis?.hourly_volume?.length">
-              <div class="flex items-end gap-0.5 h-24">
-                <template x-for="h in (analysis?.hourly_volume ?? [])" :key="h.hour">
-                  <div class="flex-1 flex flex-col items-center group relative">
-                    <div
-                      class="w-full bg-cyan-700 hover:bg-cyan-500 rounded-t transition-all cursor-default"
-                      :style="'height:' + barPct(h.count, Math.max(...(analysis.hourly_volume.map(x => x.count) ?? [1])))"
-                    ></div>
-                    <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-700
-                                text-xs text-gray-300 px-2 py-1 rounded whitespace-nowrap hidden group-hover:block z-10 pointer-events-none">
-                      <span x-text="h.hour"></span>: <span class="text-cyan-400 font-bold" x-text="h.count"></span>
-                    </div>
-                  </div>
-                </template>
-              </div>
-              <div class="flex justify-between text-gray-600 text-xs mt-1 font-mono">
-                <span x-text="analysis?.hourly_volume?.[0]?.hour ?? ''"></span>
-                <span x-text="analysis?.hourly_volume?.[analysis.hourly_volume.length - 1]?.hour ?? ''"></span>
-              </div>
-            </div>
-            <div x-show="!analysis?.hourly_volume?.length" class="text-gray-600 text-xs py-4">
-              No events in the last 24 hours.
-            </div>
-          </div>
-
-          <!-- Application lifecycle funnel -->
-          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-            <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Application Lifecycle Funnel</h3>
-            <div class="space-y-2">
-              <template x-for="f in (analysis?.application_funnel ?? [])" :key="f.state">
-                <div>
-                  <div class="flex items-center justify-between mb-0.5">
-                    <span class="text-xs font-mono" :class="stateColor(f.state)" x-text="f.state"></span>
-                    <span class="text-gray-400 text-xs" x-text="f.count.toLocaleString()"></span>
-                  </div>
-                  <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
-                    <div
-                      class="h-full rounded-full transition-all duration-500"
-                      :class="{
-                        'bg-green-500': f.state === 'FINAL_APPROVED',
-                        'bg-red-500':   f.state === 'FINAL_DECLINED' || f.state === 'DECLINED_PENDING_HUMAN',
-                        'bg-indigo-500': f.state === 'SUBMITTED' || f.state === 'AWAITING_ANALYSIS',
-                        'bg-purple-500': f.state === 'ANALYSIS_COMPLETE',
-                        'bg-yellow-500': f.state === 'COMPLIANCE_REVIEW' || f.state === 'PENDING_DECISION',
-                        'bg-lime-500':   f.state === 'APPROVED_PENDING_HUMAN',
-                        'bg-gray-500':   !['FINAL_APPROVED','FINAL_DECLINED','SUBMITTED','AWAITING_ANALYSIS',
-                                           'ANALYSIS_COMPLETE','COMPLIANCE_REVIEW','PENDING_DECISION',
-                                           'APPROVED_PENDING_HUMAN','DECLINED_PENDING_HUMAN'].includes(f.state),
-                      }"
-                      :style="'width:' + barPct(f.count, Math.max(...(analysis.application_funnel.map(x => x.count) ?? [1])))"
-                    ></div>
-                  </div>
-                </div>
-              </template>
-              <div x-show="!analysis?.application_funnel?.length"
-                class="text-gray-600 text-xs py-4">No application data.</div>
-            </div>
-          </div>
-
-        </div>
-
-        <!-- ── Row 5: Top streams table ────────────────────────────── -->
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
-          <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Top 15 Streams by Event Count</h3>
-          <div class="overflow-x-auto">
-            <table class="w-full text-xs">
-              <thead>
-                <tr class="text-gray-600 border-b border-gray-800">
-                  <th class="text-left pb-2 font-normal tracking-wider">#</th>
-                  <th class="text-left pb-2 font-normal tracking-wider">Stream ID</th>
-                  <th class="text-right pb-2 font-normal tracking-wider">Events</th>
-                  <th class="text-left pb-2 font-normal tracking-wider pl-4">Activity Bar</th>
-                  <th class="text-right pb-2 font-normal tracking-wider">Last Event</th>
-                </tr>
-              </thead>
-              <tbody>
-                <template x-for="(s, i) in (analysis?.top_streams ?? [])" :key="s.stream_id">
-                  <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
-                    <td class="py-2 text-gray-600" x-text="i + 1"></td>
-                    <td class="py-2 font-mono text-indigo-300 max-w-xs truncate" x-text="s.stream_id"></td>
-                    <td class="py-2 text-right text-white font-semibold" x-text="s.event_count.toLocaleString()"></td>
-                    <td class="py-2 pl-4 w-48">
-                      <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
-                        <div
-                          class="h-full bg-indigo-500 rounded-full"
-                          :style="'width:' + barPct(s.event_count, analysis.top_streams[0]?.event_count ?? 1)"
-                        ></div>
+              <div x-show="analysis?.daily_volume?.length">
+                <div class="flex items-end gap-1 h-28">
+                  <template x-for="d in (analysis?.daily_volume ?? [])" :key="d.day">
+                    <div class="flex-1 flex flex-col items-center group relative">
+                      <div class="w-full bg-indigo-600 hover:bg-indigo-400 rounded-t transition-colors cursor-default"
+                        :style="'height:' + barPct(d.count, Math.max(...analysis.daily_volume.map(x=>x.count), 1))"></div>
+                      <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-700
+                                  text-xs text-gray-200 px-2 py-1 rounded whitespace-nowrap hidden group-hover:block z-10 pointer-events-none">
+                        <span x-text="d.day"></span>: <span class="text-indigo-300 font-bold" x-text="d.count.toLocaleString()"></span>
                       </div>
-                    </td>
-                    <td class="py-2 text-right text-gray-500 font-mono" x-text="s.last_event ? fmtTime(s.last_event) : '—'"></td>
-                  </tr>
+                    </div>
+                  </template>
+                </div>
+                <div class="flex justify-between text-gray-700 text-xs mt-1 font-mono">
+                  <span x-text="analysis?.daily_volume?.[0]?.day ?? ''"></span>
+                  <span x-text="analysis?.daily_volume?.[analysis.daily_volume.length-1]?.day ?? ''"></span>
+                </div>
+              </div>
+              <div x-show="!analysis?.daily_volume?.length" class="text-gray-600 text-xs py-6">No data for the last 14 days.</div>
+            </div>
+
+            <!-- Hourly volume -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Hourly Volume — Last 24 Hours</h4>
+              <div x-show="analysis?.hourly_volume?.length">
+                <div class="flex items-end gap-0.5 h-28">
+                  <template x-for="h in (analysis?.hourly_volume ?? [])" :key="h.hour">
+                    <div class="flex-1 flex flex-col items-center group relative">
+                      <div class="w-full bg-cyan-700 hover:bg-cyan-500 rounded-t transition-colors cursor-default"
+                        :style="'height:' + barPct(h.count, Math.max(...analysis.hourly_volume.map(x=>x.count), 1))"></div>
+                      <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-700
+                                  text-xs text-gray-200 px-2 py-1 rounded whitespace-nowrap hidden group-hover:block z-10 pointer-events-none">
+                        <span x-text="h.hour"></span>: <span class="text-cyan-300 font-bold" x-text="h.count"></span>
+                      </div>
+                    </div>
+                  </template>
+                </div>
+                <div class="flex justify-between text-gray-700 text-xs mt-1 font-mono">
+                  <span x-text="analysis?.hourly_volume?.[0]?.hour ?? ''"></span>
+                  <span x-text="analysis?.hourly_volume?.[analysis.hourly_volume.length-1]?.hour ?? ''"></span>
+                </div>
+              </div>
+              <div x-show="!analysis?.hourly_volume?.length" class="text-gray-600 text-xs py-6">No events in the last 24 hours.</div>
+            </div>
+          </div>
+
+          <!-- Event type dist + Stream type + Version dist -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+            <!-- Event type distribution -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5 lg:col-span-2">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Event Type Distribution</h4>
+              <div class="space-y-1.5 max-h-64 overflow-y-auto pr-1">
+                <template x-for="(et, idx) in (analysis?.event_type_dist ?? [])" :key="et.event_type">
+                  <div>
+                    <div class="flex items-center justify-between mb-0.5">
+                      <span class="text-gray-300 text-xs font-mono" x-text="et.event_type"></span>
+                      <span class="text-gray-500 text-xs ml-2 whitespace-nowrap">
+                        <span x-text="et.count.toLocaleString()"></span>
+                        <span class="text-gray-700 ml-1">(<span x-text="et.pct"></span>%)</span>
+                      </span>
+                    </div>
+                    <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full transition-all duration-500" :class="typeBarColor(idx)"
+                        :style="'width:' + barPct(et.count, analysis.event_type_dist[0]?.count ?? 1)"></div>
+                    </div>
+                  </div>
                 </template>
-                <tr x-show="!analysis?.top_streams?.length">
-                  <td colspan="5" class="text-center py-8 text-gray-600">No stream data.</td>
-                </tr>
-              </tbody>
-            </table>
+                <div x-show="!analysis?.event_type_dist?.length" class="text-gray-600 text-xs py-4">No events.</div>
+              </div>
+            </div>
+
+            <!-- Stream type + Version stacked -->
+            <div class="space-y-4">
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Stream Type Breakdown</h4>
+                <div class="space-y-2">
+                  <template x-for="st in (analysis?.stream_type_dist ?? [])" :key="st.stream_type">
+                    <div class="flex items-center gap-2">
+                      <span class="text-gray-500 text-xs font-mono w-10 shrink-0 text-right" x-text="st.stream_type"></span>
+                      <div class="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div class="h-full bg-indigo-600 rounded-full"
+                          :style="'width:' + barPct(st.event_count, analysis.stream_type_dist[0]?.event_count ?? 1)"></div>
+                      </div>
+                      <span class="text-gray-400 text-xs shrink-0" x-text="st.event_count.toLocaleString()"></span>
+                    </div>
+                  </template>
+                </div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Schema Versions</h4>
+                <div class="flex flex-wrap gap-2">
+                  <template x-for="v in (analysis?.version_dist ?? [])" :key="v.version">
+                    <div class="bg-gray-800 border border-gray-700 rounded px-3 py-1.5 text-center">
+                      <div class="text-indigo-400 font-bold" x-text="'v' + v.version"></div>
+                      <div class="text-gray-500 text-xs" x-text="v.count.toLocaleString()"></div>
+                    </div>
+                  </template>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top 15 streams table -->
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+            <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Top 15 Streams by Event Count</h4>
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead><tr class="text-gray-600 border-b border-gray-800">
+                  <th class="text-left pb-2 font-normal">#</th>
+                  <th class="text-left pb-2 font-normal">Stream ID</th>
+                  <th class="text-right pb-2 font-normal">Events</th>
+                  <th class="text-left pb-2 font-normal pl-4 w-40">Bar</th>
+                  <th class="text-right pb-2 font-normal">Last Event</th>
+                </tr></thead>
+                <tbody>
+                  <template x-for="(s,i) in (analysis?.top_streams ?? [])" :key="s.stream_id">
+                    <tr class="border-b border-gray-800/40 hover:bg-gray-800/30">
+                      <td class="py-1.5 text-gray-600" x-text="i+1"></td>
+                      <td class="py-1.5 font-mono text-indigo-300 max-w-xs truncate" x-text="s.stream_id"></td>
+                      <td class="py-1.5 text-right text-white font-semibold" x-text="s.event_count.toLocaleString()"></td>
+                      <td class="py-1.5 pl-4"><div class="h-1.5 bg-gray-800 rounded-full"><div class="h-full bg-indigo-500 rounded-full"
+                        :style="'width:' + barPct(s.event_count, analysis.top_streams[0]?.event_count ?? 1)"></div></div></td>
+                      <td class="py-1.5 text-right text-gray-500 font-mono" x-text="s.last_event ? fmtTime(s.last_event) : '—'"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════
+             SECTION 2 — EVENT STREAMS + OUTBOX + CHECKPOINTS
+             (public.event_streams · public.outbox · public.projection_checkpoints)
+        ══════════════════════════════════════════════════════ -->
+        <div>
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-1 h-5 bg-purple-500 rounded"></div>
+            <h3 class="text-purple-400 text-xs font-bold tracking-widest uppercase">Infrastructure — event_streams · outbox · projection_checkpoints</h3>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+            <!-- Stream registry -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">event_streams Registry</h4>
+              <div class="space-y-2 text-xs">
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Total streams</span>
+                  <span class="text-white font-semibold" x-text="(analysis?.stream_registry?.total_streams ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Active</span>
+                  <span class="text-green-400" x-text="(analysis?.stream_registry?.active_streams ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Archived</span>
+                  <span class="text-gray-500" x-text="(analysis?.stream_registry?.archived_streams ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="text-gray-600 text-xs mt-2">Aggregate types:</div>
+                <template x-for="at in (analysis?.aggregate_type_dist ?? [])" :key="at.aggregate_type">
+                  <div class="flex justify-between">
+                    <span class="text-gray-400 font-mono" x-text="at.aggregate_type"></span>
+                    <span class="text-gray-300" x-text="at.stream_count + ' streams'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <!-- Outbox -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Outbox Status</h4>
+              <div class="space-y-2 text-xs">
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Total messages</span>
+                  <span class="text-white font-semibold" x-text="(analysis?.outbox_summary?.total_messages ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Published</span>
+                  <span class="text-green-400" x-text="(analysis?.outbox_summary?.published ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Pending</span>
+                  <span :class="(analysis?.outbox_summary?.pending??0)>0?'text-yellow-400':'text-gray-500'"
+                    x-text="(analysis?.outbox_summary?.pending ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Avg attempts</span>
+                  <span class="text-gray-300" x-text="analysis?.outbox_summary?.avg_attempts ?? '—'"></span>
+                </div>
+                <div class="text-gray-600 text-xs mt-2">By destination:</div>
+                <template x-for="d in (analysis?.outbox_dest_dist ?? [])" :key="d.destination">
+                  <div class="flex justify-between">
+                    <span class="text-gray-400 font-mono" x-text="d.destination"></span>
+                    <span class="text-gray-300" x-text="d.count + (d.pending ? ' (' + d.pending + ' pending)' : '')"></span>
+                  </div>
+                </template>
+                <div x-show="!analysis?.outbox_dest_dist?.length" class="text-gray-600">No outbox data.</div>
+              </div>
+            </div>
+
+            <!-- Projection checkpoints -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Projection Checkpoints</h4>
+              <div class="space-y-2 text-xs">
+                <template x-for="cp in (analysis?.checkpoints ?? [])" :key="cp.projection_name">
+                  <div class="border-b border-gray-800 pb-2">
+                    <div class="flex justify-between mb-0.5">
+                      <span class="text-gray-300 font-mono text-xs" x-text="cp.projection_name"></span>
+                      <span :class="(cp.lag_events ?? 0) === 0 ? 'text-green-400' : 'text-yellow-400'"
+                        x-text="(cp.lag_events ?? 0) === 0 ? 'up to date' : (cp.lag_events + ' behind')"></span>
+                    </div>
+                    <div class="text-gray-600 text-xs">pos <span x-text="cp.last_position"></span></div>
+                  </div>
+                </template>
+                <div x-show="!analysis?.checkpoints?.length" class="text-gray-600">No checkpoint data.</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════
+             SECTION 3 — PROJECTIONS
+             (projection_application_summary · projection_agent_performance
+              · projection_compliance_audit · projection_compliance_audit_snapshots)
+        ══════════════════════════════════════════════════════ -->
+        <div>
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-1 h-5 bg-cyan-500 rounded"></div>
+            <h3 class="text-cyan-400 text-xs font-bold tracking-widest uppercase">Projections — application_summary · agent_performance · compliance_audit</h3>
+          </div>
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+
+            <!-- Application funnel -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Application Lifecycle Funnel</h4>
+              <div class="space-y-1.5">
+                <template x-for="f in (analysis?.application_funnel ?? [])" :key="f.state">
+                  <div>
+                    <div class="flex justify-between mb-0.5">
+                      <span class="text-xs font-mono" :class="stateColor(f.state)" x-text="f.state"></span>
+                      <span class="text-gray-400 text-xs" x-text="f.count.toLocaleString()"></span>
+                    </div>
+                    <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full transition-all duration-500"
+                        :class="{
+                          'bg-green-500': f.state==='FINAL_APPROVED',
+                          'bg-red-500': f.state==='FINAL_DECLINED'||f.state==='DECLINED_PENDING_HUMAN',
+                          'bg-indigo-500': f.state==='SUBMITTED'||f.state==='AWAITING_ANALYSIS',
+                          'bg-purple-500': f.state==='ANALYSIS_COMPLETE',
+                          'bg-yellow-500': f.state==='COMPLIANCE_REVIEW'||f.state==='PENDING_DECISION',
+                          'bg-lime-500': f.state==='APPROVED_PENDING_HUMAN',
+                          'bg-gray-500': true,
+                        }"
+                        :style="'width:' + barPct(f.count, Math.max(...(analysis.application_funnel.map(x=>x.count)), 1))"></div>
+                    </div>
+                  </div>
+                </template>
+                <div x-show="!analysis?.application_funnel?.length" class="text-gray-600 text-xs py-4">No data.</div>
+              </div>
+              <!-- Financial KPIs -->
+              <div class="mt-4 pt-3 border-t border-gray-800 grid grid-cols-3 gap-3 text-xs">
+                <div>
+                  <div class="text-gray-600 mb-0.5">Avg requested</div>
+                  <div class="text-white font-semibold"
+                    x-text="analysis?.app_financials?.avg_requested_usd ? '$' + Number(analysis.app_financials.avg_requested_usd).toLocaleString() : '—'"></div>
+                </div>
+                <div>
+                  <div class="text-gray-600 mb-0.5">Avg approved</div>
+                  <div class="text-green-400 font-semibold"
+                    x-text="analysis?.app_financials?.avg_approved_usd ? '$' + Number(analysis.app_financials.avg_approved_usd).toLocaleString() : '—'"></div>
+                </div>
+                <div>
+                  <div class="text-gray-600 mb-0.5">Avg fraud score</div>
+                  <div :class="(analysis?.app_financials?.avg_fraud_score ?? 0) > 0.5 ? 'text-red-400' : 'text-gray-300'"
+                    x-text="analysis?.app_financials?.avg_fraud_score ?? '—'"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Risk / Decision / Compliance status -->
+            <div class="space-y-4">
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+                <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Risk Tier Distribution</h4>
+                <div class="space-y-1.5">
+                  <template x-for="r in (analysis?.risk_tier_dist ?? [])" :key="r.risk_tier">
+                    <div class="flex items-center gap-2 text-xs">
+                      <span class="w-16 text-right font-mono"
+                        :class="r.risk_tier==='HIGH'?'text-red-400':r.risk_tier==='MEDIUM'?'text-yellow-400':'text-green-400'"
+                        x-text="r.risk_tier"></span>
+                      <div class="flex-1 h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div :class="r.risk_tier==='HIGH'?'bg-red-600':r.risk_tier==='MEDIUM'?'bg-yellow-600':'bg-green-600'"
+                          class="h-full rounded-full"
+                          :style="'width:' + barPct(r.count, Math.max(...(analysis.risk_tier_dist.map(x=>x.count)), 1))"></div>
+                      </div>
+                      <span class="text-gray-400 w-8 text-right" x-text="r.count"></span>
+                    </div>
+                  </template>
+                  <div x-show="!analysis?.risk_tier_dist?.length" class="text-gray-600 text-xs">No risk data.</div>
+                </div>
+              </div>
+              <div class="grid grid-cols-2 gap-4">
+                <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                  <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-2">Decisions</h4>
+                  <div class="space-y-1 text-xs">
+                    <template x-for="d in (analysis?.decision_dist ?? [])" :key="d.decision">
+                      <div class="flex justify-between">
+                        <span :class="d.decision==='APPROVE'?'text-green-400':d.decision==='DECLINE'?'text-red-400':'text-yellow-400'"
+                          x-text="d.decision"></span>
+                        <span class="text-gray-400" x-text="d.count"></span>
+                      </div>
+                    </template>
+                    <div x-show="!analysis?.decision_dist?.length" class="text-gray-600">No decisions yet.</div>
+                  </div>
+                </div>
+                <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                  <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-2">Compliance Status</h4>
+                  <div class="space-y-1 text-xs">
+                    <template x-for="cs in (analysis?.compliance_status_dist ?? [])" :key="cs.compliance_status">
+                      <div class="flex justify-between">
+                        <span :class="cs.compliance_status==='PASSED'?'text-green-400':cs.compliance_status==='BLOCKED'?'text-red-400':'text-gray-400'"
+                          x-text="cs.compliance_status"></span>
+                        <span class="text-gray-400" x-text="cs.count"></span>
+                      </div>
+                    </template>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Agent performance -->
+          <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Agent Performance Summary</h4>
+              <div class="grid grid-cols-2 gap-3 text-xs mb-4">
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Total agents</div>
+                  <div class="text-white font-bold text-lg" x-text="analysis?.agent_summary?.total_agents ?? '—'"></div>
+                </div>
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Total analyses</div>
+                  <div class="text-indigo-400 font-bold text-lg" x-text="(analysis?.agent_summary?.total_analyses ?? 0).toLocaleString()"></div>
+                </div>
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Avg confidence</div>
+                  <div class="text-cyan-400 font-bold text-lg" x-text="analysis?.agent_summary?.overall_avg_confidence ?? '—'"></div>
+                </div>
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Human overrides</div>
+                  <div :class="(analysis?.agent_summary?.total_overrides??0)>0?'text-yellow-400':'text-gray-500'"
+                    class="font-bold text-lg" x-text="analysis?.agent_summary?.total_overrides ?? 0"></div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Compliance audit -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Compliance Audit</h4>
+              <div class="grid grid-cols-2 gap-3 text-xs mb-3">
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Total checks</div>
+                  <div class="text-white font-bold text-lg" x-text="(analysis?.compliance_audit_summary?.total_checks ?? 0).toLocaleString()"></div>
+                </div>
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Pass rate</div>
+                  <div class="text-green-400 font-bold text-lg"
+                    x-text="analysis?.compliance_audit_summary?.total_checks ?
+                      Math.round(100 * (analysis.compliance_audit_summary.passed ?? 0) / analysis.compliance_audit_summary.total_checks) + '%'
+                      : '—'"></div>
+                </div>
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Unique rules</div>
+                  <div class="text-indigo-400 font-bold text-lg" x-text="analysis?.compliance_audit_summary?.unique_rules ?? 0"></div>
+                </div>
+                <div class="bg-gray-800 rounded p-3">
+                  <div class="text-gray-600 mb-0.5">Snapshots</div>
+                  <div class="text-purple-400 font-bold text-lg" x-text="(analysis?.compliance_snapshots_summary?.total_snapshots ?? 0).toLocaleString()"></div>
+                </div>
+              </div>
+              <!-- Per-rule pass rates -->
+              <div class="space-y-1 max-h-28 overflow-y-auto">
+                <template x-for="r in (analysis?.rule_pass_rates ?? [])" :key="r.rule_id">
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="text-gray-400 font-mono w-20 shrink-0" x-text="r.rule_id"></span>
+                    <div class="flex-1 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full"
+                        :class="r.pass_rate_pct >= 80 ? 'bg-green-600' : r.pass_rate_pct >= 50 ? 'bg-yellow-600' : 'bg-red-600'"
+                        :style="'width:' + r.pass_rate_pct + '%'"></div>
+                    </div>
+                    <span class="text-gray-500 w-10 text-right" x-text="r.pass_rate_pct + '%'"></span>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+
+          <!-- Top agents table -->
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+            <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Top Agents by Analyses Completed</h4>
+            <div class="overflow-x-auto">
+              <table class="w-full text-xs">
+                <thead><tr class="text-gray-600 border-b border-gray-800">
+                  <th class="text-left pb-2 font-normal">Agent ID</th>
+                  <th class="text-left pb-2 font-normal">Model</th>
+                  <th class="text-right pb-2 font-normal">Analyses</th>
+                  <th class="text-right pb-2 font-normal">Decisions</th>
+                  <th class="text-right pb-2 font-normal">Avg Conf.</th>
+                  <th class="text-right pb-2 font-normal">Approve</th>
+                  <th class="text-right pb-2 font-normal">Decline</th>
+                  <th class="text-right pb-2 font-normal">Refer</th>
+                  <th class="text-right pb-2 font-normal">Overrides</th>
+                  <th class="text-right pb-2 font-normal">Last Seen</th>
+                </tr></thead>
+                <tbody>
+                  <template x-for="a in (analysis?.top_agents ?? [])" :key="a.agent_id + a.model_version">
+                    <tr class="border-b border-gray-800/40 hover:bg-gray-800/30">
+                      <td class="py-1.5 font-mono text-indigo-300 max-w-32 truncate" x-text="a.agent_id"></td>
+                      <td class="py-1.5 text-gray-400 font-mono" x-text="a.model_version"></td>
+                      <td class="py-1.5 text-right text-white font-semibold" x-text="a.analyses_completed"></td>
+                      <td class="py-1.5 text-right text-gray-300" x-text="a.decisions_generated"></td>
+                      <td class="py-1.5 text-right text-cyan-400" x-text="a.avg_confidence ?? '—'"></td>
+                      <td class="py-1.5 text-right text-green-400" x-text="a.approve_count"></td>
+                      <td class="py-1.5 text-right text-red-400" x-text="a.decline_count"></td>
+                      <td class="py-1.5 text-right text-yellow-400" x-text="a.refer_count"></td>
+                      <td class="py-1.5 text-right" :class="a.human_override_count>0?'text-orange-400':'text-gray-600'" x-text="a.human_override_count"></td>
+                      <td class="py-1.5 text-right text-gray-500 font-mono" x-text="a.last_seen_at ? fmtTime(a.last_seen_at) : '—'"></td>
+                    </tr>
+                  </template>
+                  <tr x-show="!analysis?.top_agents?.length">
+                    <td colspan="10" class="text-center py-8 text-gray-600">No agent data.</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- ══════════════════════════════════════════════════════
+             SECTION 4 — APPLICANT REGISTRY
+             (applicant_registry.companies · compliance_flags
+              · financial_history · loan_relationships)
+        ══════════════════════════════════════════════════════ -->
+        <div>
+          <div class="flex items-center gap-2 mb-3">
+            <div class="w-1 h-5 bg-amber-500 rounded"></div>
+            <h3 class="text-amber-400 text-xs font-bold tracking-widest uppercase">Applicant Registry — applicant_registry schema (4 tables)</h3>
+          </div>
+
+          <!-- Registry KPI row -->
+          <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 mb-4">
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">COMPANIES</div>
+              <div class="text-3xl font-bold text-amber-400" x-text="(analysis?.registry_summary?.total_companies ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">SECTORS</div>
+              <div class="text-3xl font-bold text-orange-400" x-text="analysis?.registry_summary?.sectors ?? 0"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">JURISDICTIONS</div>
+              <div class="text-3xl font-bold text-yellow-400" x-text="analysis?.registry_summary?.jurisdictions ?? 0"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">ACTIVE FLAGS</div>
+              <div class="text-3xl font-bold" :class="(analysis?.flags_summary?.active_flags ?? 0) > 0 ? 'text-red-400' : 'text-gray-500'"
+                x-text="(analysis?.flags_summary?.active_flags ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">TOTAL LOANS</div>
+              <div class="text-3xl font-bold text-blue-400" x-text="(analysis?.loan_summary?.total_loans ?? 0).toLocaleString()"></div>
+            </div>
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+              <div class="text-gray-500 text-xs tracking-widest mb-1">DEFAULT RATE</div>
+              <div class="text-3xl font-bold" :class="(analysis?.loan_summary?.default_rate_pct ?? 0) > 5 ? 'text-red-400' : 'text-gray-400'"
+                x-text="analysis?.loan_summary?.default_rate_pct != null ? analysis.loan_summary.default_rate_pct + '%' : '—'"></div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
+
+            <!-- Sector distribution -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Companies by Sector</h4>
+              <div class="space-y-1.5 max-h-56 overflow-y-auto">
+                <template x-for="(s, idx) in (analysis?.sector_dist ?? [])" :key="s.sector">
+                  <div>
+                    <div class="flex justify-between mb-0.5 text-xs">
+                      <span class="text-gray-300" x-text="s.sector"></span>
+                      <span class="text-gray-500" x-text="s.count"></span>
+                    </div>
+                    <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div class="h-full rounded-full" :class="typeBarColor(idx)"
+                        :style="'width:' + barPct(s.count, analysis.sector_dist[0]?.count ?? 1)"></div>
+                    </div>
+                  </div>
+                </template>
+                <div x-show="!analysis?.sector_dist?.length" class="text-gray-600 text-xs py-4">No sector data.</div>
+              </div>
+            </div>
+
+            <!-- Risk tier + Trajectory + Legal type -->
+            <div class="space-y-4">
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-2">Registry Risk Tier</h4>
+                <div class="space-y-1 text-xs">
+                  <template x-for="r in (analysis?.registry_risk_tier_dist ?? [])" :key="r.risk_tier">
+                    <div class="flex justify-between">
+                      <span :class="r.risk_tier==='HIGH'||r.risk_tier==='high'?'text-red-400':r.risk_tier==='MEDIUM'||r.risk_tier==='medium'?'text-yellow-400':'text-green-400'"
+                        x-text="r.risk_tier"></span>
+                      <span class="text-gray-400" x-text="r.count"></span>
+                    </div>
+                  </template>
+                  <div x-show="!analysis?.registry_risk_tier_dist?.length" class="text-gray-600">No data.</div>
+                </div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-2">Trajectory</h4>
+                <div class="space-y-1 text-xs">
+                  <template x-for="t in (analysis?.trajectory_dist ?? [])" :key="t.trajectory">
+                    <div class="flex justify-between">
+                      <span :class="t.trajectory==='growth'||t.trajectory==='GROWTH'?'text-green-400':t.trajectory==='declining'||t.trajectory==='DECLINING'?'text-red-400':'text-gray-300'"
+                        x-text="t.trajectory"></span>
+                      <span class="text-gray-400" x-text="t.count"></span>
+                    </div>
+                  </template>
+                  <div x-show="!analysis?.trajectory_dist?.length" class="text-gray-600">No data.</div>
+                </div>
+              </div>
+              <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+                <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-2">Legal Type</h4>
+                <div class="space-y-1 text-xs">
+                  <template x-for="l in (analysis?.legal_type_dist ?? [])" :key="l.legal_type">
+                    <div class="flex justify-between">
+                      <span class="text-gray-300" x-text="l.legal_type"></span>
+                      <span class="text-gray-400" x-text="l.count"></span>
+                    </div>
+                  </template>
+                  <div x-show="!analysis?.legal_type_dist?.length" class="text-gray-600">No data.</div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Top jurisdictions -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Top Jurisdictions</h4>
+              <div class="space-y-1.5">
+                <template x-for="(j, idx) in (analysis?.top_jurisdictions ?? [])" :key="j.jurisdiction">
+                  <div class="flex items-center gap-2 text-xs">
+                    <span class="text-gray-300 flex-1" x-text="j.jurisdiction"></span>
+                    <div class="w-20 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                      <div class="h-full bg-amber-600 rounded-full"
+                        :style="'width:' + barPct(j.count, analysis.top_jurisdictions[0]?.count ?? 1)"></div>
+                    </div>
+                    <span class="text-gray-500 w-5 text-right" x-text="j.count"></span>
+                  </div>
+                </template>
+                <div x-show="!analysis?.top_jurisdictions?.length" class="text-gray-600 text-xs py-4">No jurisdiction data.</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Compliance flags + Financial history + Loans -->
+          <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+
+            <!-- Compliance flags -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Compliance Flags</h4>
+              <div class="space-y-2 text-xs mb-3">
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Total flags</span>
+                  <span class="text-white font-semibold" x-text="(analysis?.flags_summary?.total_flags ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Active</span>
+                  <span class="text-red-400 font-semibold" x-text="(analysis?.flags_summary?.active_flags ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Companies flagged</span>
+                  <span class="text-orange-400" x-text="(analysis?.flags_summary?.companies_flagged ?? 0).toLocaleString()"></span>
+                </div>
+              </div>
+              <h5 class="text-gray-600 text-xs mb-2 uppercase tracking-wider">By Type</h5>
+              <div class="space-y-1 text-xs">
+                <template x-for="f in (analysis?.flag_type_dist ?? [])" :key="f.flag_type">
+                  <div class="flex justify-between">
+                    <span class="text-gray-300 font-mono" x-text="f.flag_type"></span>
+                    <span class="text-gray-400">
+                      <span x-text="f.total"></span>
+                      <span class="text-red-400 ml-1" x-show="f.active > 0" x-text="'(' + f.active + ' active)'"></span>
+                    </span>
+                  </div>
+                </template>
+                <div x-show="!analysis?.flag_type_dist?.length" class="text-gray-600">No flags recorded.</div>
+              </div>
+            </div>
+
+            <!-- Financial history -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Financial History</h4>
+              <div class="space-y-2 text-xs mb-3">
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Records</span>
+                  <span class="text-white font-semibold" x-text="(analysis?.financials_summary?.total_records ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Companies</span>
+                  <span class="text-gray-300" x-text="analysis?.financials_summary?.companies_with_financials ?? 0"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Avg revenue</span>
+                  <span class="text-amber-400"
+                    x-text="analysis?.financials_summary?.avg_revenue ? '$' + Number(analysis.financials_summary.avg_revenue).toLocaleString() : '—'"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Avg net income</span>
+                  <span x-text="analysis?.financials_summary?.avg_net_income ? '$' + Number(analysis.financials_summary.avg_net_income).toLocaleString() : '—'"
+                    :class="(analysis?.financials_summary?.avg_net_income ?? 0) >= 0 ? 'text-green-400' : 'text-red-400'"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-500">Avg EBITDA margin</span>
+                  <span class="text-cyan-400" x-text="analysis?.financials_summary?.avg_ebitda_margin != null ? analysis.financials_summary.avg_ebitda_margin + '%' : '—'"></span>
+                </div>
+              </div>
+              <h5 class="text-gray-600 text-xs mb-2 uppercase tracking-wider">Revenue by Sector</h5>
+              <div class="space-y-1 text-xs max-h-32 overflow-y-auto">
+                <template x-for="s in (analysis?.revenue_by_sector ?? [])" :key="s.sector">
+                  <div class="flex justify-between border-b border-gray-800/40 pb-1">
+                    <span class="text-gray-300" x-text="s.sector"></span>
+                    <span class="text-amber-400" x-text="s.avg_revenue ? '$' + Number(s.avg_revenue).toLocaleString() : '—'"></span>
+                  </div>
+                </template>
+                <div x-show="!analysis?.revenue_by_sector?.length" class="text-gray-600">No financial data.</div>
+              </div>
+            </div>
+
+            <!-- Loan relationships -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h4 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Loan Relationships</h4>
+              <div class="space-y-2 text-xs mb-3">
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Total loans</span>
+                  <span class="text-white font-semibold" x-text="(analysis?.loan_summary?.total_loans ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Borrowers</span>
+                  <span class="text-gray-300" x-text="(analysis?.loan_summary?.borrowers ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Total exposure</span>
+                  <span class="text-blue-400"
+                    x-text="analysis?.loan_summary?.total_loan_usd ? '$' + Number(analysis.loan_summary.total_loan_usd).toLocaleString() : '—'"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Avg loan size</span>
+                  <span class="text-gray-300"
+                    x-text="analysis?.loan_summary?.avg_loan_usd ? '$' + Number(analysis.loan_summary.avg_loan_usd).toLocaleString() : '—'"></span>
+                </div>
+                <div class="flex justify-between border-b border-gray-800 pb-1">
+                  <span class="text-gray-500">Defaults</span>
+                  <span class="text-red-400" x-text="(analysis?.loan_summary?.defaults ?? 0).toLocaleString()"></span>
+                </div>
+                <div class="flex justify-between">
+                  <span class="text-gray-500">Default rate</span>
+                  <span :class="(analysis?.loan_summary?.default_rate_pct ?? 0) > 5 ? 'text-red-400' : 'text-green-400'"
+                    x-text="analysis?.loan_summary?.default_rate_pct != null ? analysis.loan_summary.default_rate_pct + '%' : '—'"></span>
+                </div>
+              </div>
+              <h5 class="text-gray-600 text-xs mb-2 uppercase tracking-wider">By Status</h5>
+              <div class="space-y-1 text-xs">
+                <template x-for="l in (analysis?.loan_status_dist ?? [])" :key="l.status">
+                  <div class="flex justify-between">
+                    <span class="text-gray-300" x-text="l.status"></span>
+                    <span class="text-gray-400">
+                      <span x-text="l.count"></span>
+                      <span class="text-red-400 ml-1" x-show="l.defaults > 0" x-text="'(' + l.defaults + ' default)'"></span>
+                    </span>
+                  </div>
+                </template>
+                <div x-show="!analysis?.loan_status_dist?.length" class="text-gray-600">No loan relationship data.</div>
+              </div>
+            </div>
           </div>
         </div>
 
