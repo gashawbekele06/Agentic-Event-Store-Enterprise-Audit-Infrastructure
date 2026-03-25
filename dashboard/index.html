@@ -712,6 +712,96 @@
 
     </div><!-- /run -->
 
+    <!-- ════════════════════════════════════════════════════════════
+         DEMO TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'demo'" x-cloak>
+
+      <div class="text-gray-500 text-xs tracking-widest mb-4">6-STEP DEMO SUITE</div>
+
+      <!-- Step cards grid -->
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
+
+        <template x-for="s in demoSteps" :key="s.step">
+          <div class="bg-gray-900 border rounded-lg overflow-hidden"
+            :class="demoActiveStep === s.step ? 'border-indigo-500' : 'border-gray-800'">
+
+            <!-- Card header -->
+            <div class="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+              <div class="flex items-center gap-2">
+                <span class="text-indigo-400 font-bold text-sm w-5" x-text="s.step"></span>
+                <span class="text-gray-200 text-xs font-semibold" x-text="s.label"></span>
+              </div>
+              <div>
+                <span x-show="demoJobStatus[s.step] === 'running'"
+                  class="text-yellow-400 text-xs animate-pulse">● RUNNING</span>
+                <span x-show="demoJobStatus[s.step] === 'done'"
+                  class="text-green-400 text-xs">✓ DONE</span>
+                <span x-show="demoJobStatus[s.step] === 'error'"
+                  class="text-red-400 text-xs">✗ ERROR</span>
+              </div>
+            </div>
+
+            <!-- Description -->
+            <div class="px-4 py-2 text-gray-500 text-xs leading-relaxed" x-text="s.desc"></div>
+
+            <!-- Run button -->
+            <div class="px-4 pb-3">
+              <button
+                @click="runDemo(s.step)"
+                :disabled="demoJobStatus[s.step] === 'running'"
+                class="w-full py-1.5 bg-indigo-700 hover:bg-indigo-600 disabled:bg-gray-700
+                       disabled:cursor-not-allowed text-white rounded text-xs font-semibold
+                       transition-colors"
+              >&#9654; Run Step <span x-text="s.step"></span></button>
+            </div>
+          </div>
+        </template>
+
+      </div>
+
+      <!-- Live terminal for active step -->
+      <div x-show="demoActiveStep" x-cloak
+        class="mb-5 bg-gray-950 border border-gray-800 rounded-lg overflow-hidden">
+        <div class="flex items-center justify-between px-4 py-2 bg-gray-900 border-b border-gray-800">
+          <span class="text-gray-500 text-xs tracking-wider"
+            x-text="'STEP ' + demoActiveStep + ' OUTPUT'"></span>
+          <span x-show="demoJobStatus[demoActiveStep] === 'running'"
+            class="text-yellow-400 text-xs animate-pulse">● LIVE</span>
+          <span x-show="demoJobStatus[demoActiveStep] === 'done'" class="text-green-400 text-xs">✓ COMPLETE</span>
+          <span x-show="demoJobStatus[demoActiveStep] === 'error'" class="text-red-400 text-xs">✗ ERROR</span>
+        </div>
+        <div
+          x-ref="demoTerminal"
+          class="p-4 h-96 overflow-y-auto font-mono text-xs leading-relaxed"
+        >
+          <template x-for="(line, i) in demoLines" :key="i">
+            <div
+              :class="{
+                'text-green-400':  line.includes('OK') || line.includes('PASS') || line.includes('passed') || line.includes('SUCCESS') || line.includes('APPROVED'),
+                'text-red-400':    line.includes('FAIL') || line.includes('ERROR') || line.includes('DECLINED') || line.includes('TAMPER') || line.includes('BLOCKED'),
+                'text-yellow-400': line.includes('WARNING') || line.includes('REFER') || line.includes('fallback') || line.includes('retry') || line.includes('RETRY'),
+                'text-cyan-300':   line.startsWith('=') || line.startsWith('-') || line.startsWith('DEMO') || line.startsWith('Step') || line.startsWith('STEP'),
+                'text-indigo-300': line.startsWith('  [') || line.startsWith('[AGENT') || line.startsWith('[INFO'),
+                'text-gray-500':   line.includes('[week3_adapter]') || line.includes('[DEBUG'),
+                'text-gray-200':   true,
+              }"
+              x-text="line || '\u00a0'"
+            ></div>
+          </template>
+          <div x-show="demoJobStatus[demoActiveStep] === 'running'"
+            class="text-indigo-400 animate-pulse">▌</div>
+          <div x-show="!demoActiveStep || demoLines.length === 0"
+            class="text-gray-700 italic">Select a step above to run it...</div>
+        </div>
+      </div>
+
+      <!-- All clear message when no step selected -->
+      <div x-show="!demoActiveStep"
+        class="text-gray-700 text-sm italic">Click a step card to run the demo.</div>
+
+    </div><!-- /demo -->
+
   </main>
 
   <!-- ── Alpine.js app ────────────────────────────────────────────── -->
@@ -726,6 +816,7 @@
         { id: 'agents',       label: 'Agents' },
         { id: 'events',       label: 'Event Explorer' },
         { id: 'run',          label: '▶ Run Pipeline' },
+        { id: 'demo',         label: '⚡ Demo Suite' },
       ],
 
       // Applications
@@ -769,6 +860,27 @@
       runResult: null,
       runAppIdActual: '',
       _runPollTimer: null,
+
+      // Demo Suite
+      demoActiveStep: null,
+      demoJobIds: {},      // step → job_id
+      demoJobStatus: {},   // step → 'running'|'done'|'error'
+      demoLines: [],
+      _demoPollTimers: {}, // step → intervalId
+      demoSteps: [
+        { step: '1', label: 'The Week Standard',
+          desc: 'Full loan lifecycle through MCP command handlers. Queries complete audit trail in < 60s.' },
+        { step: '2', label: 'Concurrency Under Pressure',
+          desc: 'Two agents race to write the same stream version. Exactly one wins; the other retries with OptimisticConcurrencyError.' },
+        { step: '3', label: 'Temporal Compliance Query',
+          desc: 'Point-in-time compliance state reconstruction — what did the rules say at moment T?' },
+        { step: '4', label: 'Schema Upcasting',
+          desc: 'Old v1 events are transparently upcasted to v2 schema on read — no data migration needed.' },
+        { step: '5', label: 'Gas Town Integrity',
+          desc: 'Cryptographic audit chain verification. Detects any tampering in the event log.' },
+        { step: '6', label: 'What-If Counterfactual',
+          desc: 'Re-project history with a modified rule set to answer "what would have happened if...".' },
+      ],
 
       lagStr: '—',
 
@@ -960,6 +1072,71 @@
             if (t) t.scrollTop = t.scrollHeight
           })
         } catch (e) { console.error(e) }
+      },
+
+      // ── Demo runner ────────────────────────────────────────────
+
+      async runDemo(step) {
+        if (this.demoJobStatus[step] === 'running') return
+
+        // Stop any existing poll for this step
+        if (this._demoPollTimers[step]) {
+          clearInterval(this._demoPollTimers[step])
+          delete this._demoPollTimers[step]
+        }
+
+        // Switch active step and clear output
+        this.demoActiveStep = step
+        this.demoLines = []
+        this.demoJobStatus = { ...this.demoJobStatus, [step]: 'running' }
+
+        try {
+          const r = await fetch(`/api/demo/run/${step}`, { method: 'POST' })
+          if (!r.ok) { throw new Error(`HTTP ${r.status}`) }
+          const data = await r.json()
+          this.demoJobIds = { ...this.demoJobIds, [step]: data.job_id }
+
+          // Poll every 1.5 s
+          this._demoPollTimers[step] = setInterval(() => this._pollDemo(step), 1500)
+        } catch (e) {
+          this.demoJobStatus = { ...this.demoJobStatus, [step]: 'error' }
+          this.demoLines = ['Failed to start demo step: ' + e]
+        }
+      },
+
+      async _pollDemo(step) {
+        const jobId = this.demoJobIds[step]
+        if (!jobId) return
+        try {
+          const r = await fetch(`/api/demo/status/${jobId}`)
+          const data = await r.json()
+          // Only update lines if this is the currently visible step
+          if (this.demoActiveStep === step) {
+            this.demoLines = data.lines ?? []
+          }
+          if (data.status !== 'running') {
+            this.demoJobStatus = { ...this.demoJobStatus, [step]: data.status }
+            if (data.error && this.demoActiveStep === step) {
+              this.demoLines = [...(data.lines ?? []), 'ERROR: ' + data.error]
+            }
+            clearInterval(this._demoPollTimers[step])
+            delete this._demoPollTimers[step]
+          }
+          // Auto-scroll
+          this.$nextTick(() => {
+            const t = this.$refs.demoTerminal
+            if (t) t.scrollTop = t.scrollHeight
+          })
+        } catch (e) { console.error(e) }
+      },
+
+      switchDemoView(step) {
+        // Just switch which step's output is shown (no re-run)
+        if (this.demoJobIds[step]) {
+          this.demoActiveStep = step
+          // Immediately show cached lines by re-polling once
+          this._pollDemo(step)
+        }
       },
 
       async _fetchStream() {
