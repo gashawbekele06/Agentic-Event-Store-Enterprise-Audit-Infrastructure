@@ -400,3 +400,74 @@ async def pipeline_status(job_id: str):
     if not job:
         raise HTTPException(404, "Job not found")
     return _resp(job)
+
+
+# ── Demo runner ───────────────────────────────────────────────────────────────
+
+_DEMO_STEPS = {
+    "1": ("DEMO STEP 1 — The Week Standard",       "demo/step1_week_standard.py"),
+    "2": ("DEMO STEP 2 — Concurrency Under Pressure", "demo/step2_concurrency.py"),
+    "3": ("DEMO STEP 3 — Temporal Compliance Query",  "demo/step3_temporal_query.py"),
+    "4": ("DEMO STEP 4 — Schema Upcasting",           "demo/step4_upcasting.py"),
+    "5": ("DEMO STEP 5 — Gas Town Integrity",         "demo/step5_gas_town.py"),
+    "6": ("DEMO STEP 6 — What-If Counterfactual",     "demo/step6_what_if.py"),
+}
+
+# Shared job store for demo runs (re-uses _jobs dict and _MAX_JOBS limit)
+
+
+async def _execute_demo(job_id: str, step: str) -> None:
+    job = _jobs[job_id]
+    _, script_rel = _DEMO_STEPS[step]
+    script_path = Path(_ROOT) / script_rel
+
+    orig_stdout = sys.stdout
+    capture = _LineCapture(job["lines"], orig_stdout)
+    try:
+        sys.stdout = capture  # type: ignore[assignment]
+
+        spec = importlib.util.spec_from_file_location(f"demo_step{step}", script_path)
+        mod  = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)          # defines main()
+        await mod.main()                      # run it
+
+        job["status"] = "done"
+    except Exception as exc:
+        job["error"] = str(exc)
+        job["status"] = "error"
+    finally:
+        sys.stdout = orig_stdout
+        capture.flush()
+
+
+@app.post("/api/demo/run/{step}")
+async def start_demo(step: str):
+    if step not in _DEMO_STEPS:
+        raise HTTPException(400, f"Unknown demo step '{step}'. Valid: {list(_DEMO_STEPS)}")
+
+    title, _ = _DEMO_STEPS[step]
+    job_id = str(_uuid_mod.uuid4())
+
+    if len(_jobs) >= _MAX_JOBS:
+        oldest = next(iter(_jobs))
+        del _jobs[oldest]
+
+    _jobs[job_id] = {
+        "status": "running",
+        "lines":  [],
+        "result": None,
+        "error":  None,
+        "step":   step,
+        "title":  title,
+    }
+
+    asyncio.create_task(_execute_demo(job_id, step))
+    return _resp({"job_id": job_id, "step": step, "title": title})
+
+
+@app.get("/api/demo/status/{job_id}")
+async def demo_status(job_id: str):
+    job = _jobs.get(job_id)
+    if not job:
+        raise HTTPException(404, "Job not found")
+    return _resp(job)
