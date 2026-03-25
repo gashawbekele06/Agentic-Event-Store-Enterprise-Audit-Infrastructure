@@ -802,6 +802,186 @@
 
     </div><!-- /demo -->
 
+    <!-- ════════════════════════════════════════════════════════════
+         GLOBAL EVENT STORE TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'global'" x-cloak>
+
+      <div class="text-gray-500 text-xs tracking-widest mb-4">GLOBAL EVENT STORE — READ-ONLY CHRONOLOGICAL TIMELINE</div>
+
+      <!-- Filter bar -->
+      <div class="flex flex-wrap gap-3 mb-5">
+        <!-- Event type filter -->
+        <select
+          x-model="globalEventTypeFilter"
+          @change="applyGlobalFilters()"
+          class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200
+                 focus:outline-none focus:border-indigo-500"
+        >
+          <option value="">All Event Types</option>
+          <template x-for="t in globalEventTypes" :key="t">
+            <option :value="t" x-text="t"></option>
+          </template>
+        </select>
+
+        <!-- Stream prefix filter -->
+        <select
+          x-model="globalStreamPrefixFilter"
+          @change="applyGlobalFilters()"
+          class="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200
+                 focus:outline-none focus:border-indigo-500"
+        >
+          <option value="">All Streams</option>
+          <option value="loan-">loan-*</option>
+          <option value="docpkg-">docpkg-*</option>
+          <option value="fraud-">fraud-*</option>
+          <option value="compliance-">compliance-*</option>
+          <option value="agent-">agent-*</option>
+        </select>
+
+        <!-- Refresh -->
+        <button
+          @click="applyGlobalFilters()"
+          class="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-300 rounded text-sm transition-colors"
+        >&#8635; Refresh</button>
+
+        <!-- Counter -->
+        <span class="self-center text-gray-600 text-xs ml-auto">
+          <span class="text-gray-400" x-text="globalTotal.toLocaleString()"></span> total events
+        </span>
+      </div>
+
+      <!-- Loading -->
+      <div x-show="loadingGlobal" class="text-center py-16 text-gray-600 text-sm">Loading events...</div>
+
+      <!-- Events timeline -->
+      <div x-show="!loadingGlobal && globalEvents.length > 0">
+
+        <!-- Pagination bar -->
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-gray-500 text-xs">
+            Showing
+            <span x-text="(globalOffset + 1).toLocaleString()"></span>–<span
+              x-text="Math.min(globalOffset + globalLimit, globalTotal).toLocaleString()"></span>
+            of <span x-text="globalTotal.toLocaleString()"></span>
+          </span>
+          <div class="flex gap-2">
+            <button
+              @click="globalPrev()"
+              :disabled="globalOffset === 0"
+              class="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-25
+                     disabled:cursor-not-allowed rounded text-xs transition-colors"
+            >&#8592; Prev</button>
+            <button
+              @click="globalNext()"
+              :disabled="globalOffset + globalLimit >= globalTotal"
+              class="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-25
+                     disabled:cursor-not-allowed rounded text-xs transition-colors"
+            >Next &#8594;</button>
+          </div>
+        </div>
+
+        <!-- Timeline -->
+        <div class="relative">
+          <!-- Vertical spine -->
+          <div class="absolute left-6 top-0 bottom-0 w-px bg-gray-800"></div>
+
+          <div class="space-y-1">
+            <template x-for="evt in globalEvents" :key="evt.global_position">
+              <div class="relative flex gap-4 pl-14">
+
+                <!-- Timeline dot -->
+                <div class="absolute left-4 top-3 w-4 h-4 rounded-full border-2 flex-shrink-0 z-10"
+                  :class="eventDot(evt.event_type)">
+                </div>
+
+                <!-- Card -->
+                <div class="flex-1 bg-gray-900 border border-gray-800 rounded-lg p-3
+                            hover:border-gray-700 transition-colors">
+                  <div class="flex flex-wrap items-center gap-2">
+
+                    <!-- Global position badge -->
+                    <span class="text-gray-700 font-mono text-xs bg-gray-950 border border-gray-800
+                                 rounded px-1.5 py-0.5 flex-shrink-0"
+                      x-text="'#' + evt.global_position">
+                    </span>
+
+                    <!-- Event type badge -->
+                    <span :class="eventTypeBadge(evt.event_type)"
+                      class="px-2 py-0.5 rounded text-xs font-medium flex-shrink-0"
+                      x-text="evt.event_type">
+                    </span>
+
+                    <!-- Stream pill -->
+                    <span :class="streamPill(evt.stream_id)"
+                      class="px-2 py-0.5 rounded text-xs font-mono flex-shrink-0"
+                      x-text="evt.stream_id">
+                    </span>
+
+                    <!-- Event summary -->
+                    <span class="text-gray-500 text-xs truncate max-w-xs"
+                      x-text="eventSummary(evt)">
+                    </span>
+
+                    <!-- Spacer + timestamp + expand -->
+                    <div class="ml-auto flex items-center gap-2 flex-shrink-0">
+                      <span class="text-gray-700 text-xs hidden lg:inline"
+                        x-text="'v' + evt.event_version">
+                      </span>
+                      <span class="text-gray-600 text-xs hidden md:inline"
+                        x-text="fmtTime(evt.recorded_at)">
+                      </span>
+                      <button
+                        @click="evt.expanded = !evt.expanded"
+                        class="text-gray-600 hover:text-gray-400 text-xs w-4 text-center transition-colors"
+                        x-text="evt.expanded ? '▲' : '▼'"
+                      ></button>
+                    </div>
+                  </div>
+
+                  <!-- Expandable payload -->
+                  <div x-show="evt.expanded" x-cloak class="mt-2 pt-2 border-t border-gray-800">
+                    <pre class="text-xs text-gray-400 overflow-x-auto max-h-72 bg-gray-950 rounded p-2"
+                      x-text="JSON.stringify(evt.payload, null, 2)">
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Bottom pagination -->
+        <div class="flex justify-end gap-2 mt-4">
+          <button
+            @click="globalPrev()"
+            :disabled="globalOffset === 0"
+            class="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-25
+                   disabled:cursor-not-allowed rounded text-xs transition-colors"
+          >&#8592; Prev</button>
+          <button
+            @click="globalNext()"
+            :disabled="globalOffset + globalLimit >= globalTotal"
+            class="px-3 py-1 bg-gray-800 hover:bg-gray-700 disabled:opacity-25
+                   disabled:cursor-not-allowed rounded text-xs transition-colors"
+          >Next &#8594;</button>
+        </div>
+      </div>
+
+      <!-- Empty state -->
+      <div x-show="!loadingGlobal && globalEvents.length === 0"
+        class="text-center py-16 text-gray-600 text-sm">
+        No events found.
+        <span x-show="globalEventTypeFilter || globalStreamPrefixFilter">
+          Try clearing the filters.
+        </span>
+        <span x-show="!globalEventTypeFilter && !globalStreamPrefixFilter">
+          Run the pipeline or seed data to generate events.
+        </span>
+      </div>
+
+    </div><!-- /global -->
+
   </main>
 
   <!-- ── Alpine.js app ────────────────────────────────────────────── -->
@@ -817,6 +997,7 @@
         { id: 'events',       label: 'Event Explorer' },
         { id: 'run',          label: '▶ Run Pipeline' },
         { id: 'demo',         label: '⚡ Demo Suite' },
+        { id: 'global',       label: '🗄 Global Store' },
       ],
 
       // Applications
@@ -848,6 +1029,12 @@
       explorerOffset: 0,
       explorerLimit: 30,
       loadingExplorer: false,
+
+      // Seed
+      seedStatus: null,   // null | 'running' | 'done' | 'error'
+      seedJobId: null,
+      seedResults: [],
+      _seedPollTimer: null,
 
       // Run Pipeline
       runCompanies: [],
@@ -882,6 +1069,16 @@
           desc: 'Re-project history with a modified rule set to answer "what would have happened if...".' },
       ],
 
+      // Global Event Store
+      globalEvents: [],
+      globalTotal: 0,
+      globalOffset: 0,
+      globalLimit: 50,
+      globalEventTypeFilter: '',
+      globalStreamPrefixFilter: '',
+      globalEventTypes: [],
+      loadingGlobal: false,
+
       lagStr: '—',
 
       // ── Lifecycle ──────────────────────────────────────────────
@@ -912,6 +1109,10 @@
       async switchTab(tab) {
         this.activeTab = tab
         if (tab === 'agents' && this.agents.length === 0) await this.loadAgents()
+        if (tab === 'global') {
+          if (this.globalEventTypes.length === 0) await this.loadGlobalEventTypes()
+          if (this.globalEvents.length === 0) await this.loadGlobal()
+        }
       },
 
       // ── Data loaders ───────────────────────────────────────────
@@ -1016,6 +1217,41 @@
           this.runCompanies = await r.json()
           if (this.runCompanies.length && !this.runCompanies.includes(this.runCompanyId))
             this.runCompanyId = this.runCompanies[0]
+        } catch (e) { console.error(e) }
+      },
+
+      // ── Seed database ──────────────────────────────────────────
+
+      async seedDatabase() {
+        if (this.seedStatus === 'running') return
+        this.seedStatus = 'running'
+        this.seedResults = []
+        if (this._seedPollTimer) clearInterval(this._seedPollTimer)
+
+        try {
+          const r = await fetch('/api/seed', { method: 'POST' })
+          const data = await r.json()
+          this.seedJobId = data.job_id
+          this._seedPollTimer = setInterval(() => this._pollSeed(), 1500)
+        } catch (e) {
+          this.seedStatus = 'error'
+        }
+      },
+
+      async _pollSeed() {
+        if (!this.seedJobId) return
+        try {
+          const r = await fetch(`/api/pipeline/status/${this.seedJobId}`)
+          const data = await r.json()
+          if (data.status !== 'running') {
+            this.seedStatus = data.status
+            this.seedResults = data.result ?? []
+            clearInterval(this._seedPollTimer)
+            this._seedPollTimer = null
+            // Refresh stats and application list
+            await this.loadApplications()
+            await this.loadStats()
+          }
         } catch (e) { console.error(e) }
       },
 
@@ -1150,6 +1386,48 @@
           this.explorerEvents = (data.events ?? []).map(e => ({ ...e, expanded: false }))
         } catch (e) { console.error(e) }
         finally { this.loadingExplorer = false }
+      },
+
+      // ── Global Event Store ─────────────────────────────────────
+
+      async loadGlobal() {
+        this.loadingGlobal = true
+        this.globalEvents = []
+        try {
+          const params = new URLSearchParams({
+            limit:  this.globalLimit,
+            offset: this.globalOffset,
+          })
+          if (this.globalEventTypeFilter)    params.set('event_type',    this.globalEventTypeFilter)
+          if (this.globalStreamPrefixFilter) params.set('stream_prefix', this.globalStreamPrefixFilter)
+          const r = await fetch(`/api/events/global?${params}`)
+          const data = await r.json()
+          this.globalTotal  = data.total ?? 0
+          this.globalEvents = (data.events ?? []).map(e => ({ ...e, expanded: false }))
+        } catch (e) { console.error(e) }
+        finally { this.loadingGlobal = false }
+      },
+
+      async loadGlobalEventTypes() {
+        try {
+          const r = await fetch('/api/events/global/types')
+          this.globalEventTypes = await r.json()
+        } catch (e) { console.error(e) }
+      },
+
+      async globalNext() {
+        this.globalOffset += this.globalLimit
+        await this.loadGlobal()
+      },
+
+      async globalPrev() {
+        this.globalOffset = Math.max(0, this.globalOffset - this.globalLimit)
+        await this.loadGlobal()
+      },
+
+      async applyGlobalFilters() {
+        this.globalOffset = 0
+        await this.loadGlobal()
       },
 
       // ── Formatting ─────────────────────────────────────────────
