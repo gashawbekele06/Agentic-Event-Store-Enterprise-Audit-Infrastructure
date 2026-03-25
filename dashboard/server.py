@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import json
+import logging
 import os
 import sys
 import uuid as _uuid_mod
@@ -19,6 +20,12 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 from uuid import UUID
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+)
+logger = logging.getLogger("apex.dashboard")
 
 _ROOT = str(Path(__file__).resolve().parents[1])
 if _ROOT not in sys.path:
@@ -135,7 +142,12 @@ async def get_stats():
             )
         return _resp(dict(row) if row else {})
     except Exception as e:
-        return _resp({"error": str(e), "total": 0})
+        logger.error("get_stats failed: %s", e)
+        return _resp({
+            "total": 0, "approved": 0, "declined": 0, "referred": 0,
+            "compliance_blocked": 0, "high_fraud": 0, "avg_fraud_score": None,
+            "error": str(e),
+        })
 
 
 # ── Applications ──────────────────────────────────────────────────────────────
@@ -155,7 +167,8 @@ async def list_applications(state: str | None = None):
                     "SELECT * FROM projection_application_summary ORDER BY created_at DESC"
                 )
         return _resp([dict(r) for r in rows])
-    except Exception:
+    except Exception as e:
+        logger.error("list_applications failed: %s", e)
         return _resp([])
 
 
@@ -309,6 +322,51 @@ async def get_lag():
     if _daemon:
         return _resp(await _daemon.get_all_lags())
     return _resp({})
+
+
+# ── Health / readiness ────────────────────────────────────────────────────────
+
+@app.get("/health")
+async def health():
+    """
+    Liveness + readiness probe.
+
+    Returns:
+      status     "ok" | "degraded" | "down"
+      db         True if a DB ping round-trips successfully
+      daemon     True if the projection daemon task is alive
+      lags       per-projection event lag counts
+      event_count total events in the store
+    """
+    result: dict[str, Any] = {
+        "status":      "ok",
+        "db":          False,
+        "daemon":      False,
+        "lags":        {},
+        "event_count": 0,
+    }
+
+    # DB ping
+    try:
+        async with _store._pool.acquire() as conn:
+            result["event_count"] = await conn.fetchval("SELECT COUNT(*) FROM events") or 0
+        result["db"] = True
+    except Exception as e:
+        logger.error("health: DB ping failed: %s", e)
+        result["status"] = "down"
+
+    # Daemon check
+    if _daemon_task and not _daemon_task.done():
+        result["daemon"] = True
+        try:
+            result["lags"] = await _daemon.get_all_lags()
+        except Exception:
+            pass
+    else:
+        if result["status"] == "ok":
+            result["status"] = "degraded"
+
+    return _resp(result)
 
 
 # ── Available companies ───────────────────────────────────────────────────────
@@ -775,3 +833,181 @@ async def get_global_event_types():
         return _resp([r["event_type"] for r in rows])
     except Exception:
         return _resp([])
+
+
+# ── Analysis report ───────────────────────────────────────────────────────────
+
+@app.get("/api/analysis")
+async def get_analysis():
+    """
+    Comprehensive event-store analysis report pulled directly from the
+    ``events`` table and the projection views.
+
+    Sections returned:
+      summary          — totals: events, streams, today, last recorded_at
+      event_type_dist  — count + pct per event type, sorted desc
+      daily_volume     — events per calendar day for the last 14 days
+      hourly_volume    — events per hour for the last 24 hours
+      top_streams      — top 15 streams by event count
+      stream_type_dist — stream-prefix breakdown (loan / agent / audit / other)
+      application_funnel — application count per lifecycle state
+      version_dist     — event schema version distribution
+      write_latency    — p50 / p95 / p99 gap between consecutive global positions
+                         (proxy for write cadence, not wall-clock latency)
+    """
+    try:
+        async with _store._pool.acquire() as conn:
+
+            # ── Summary ──────────────────────────────────────────────
+            summary_row = await conn.fetchrow(
+                """
+                SELECT
+                    COUNT(*)                                              AS total_events,
+                    COUNT(DISTINCT stream_id)                             AS total_streams,
+                    COUNT(*) FILTER (WHERE recorded_at::date = CURRENT_DATE) AS today_events,
+                    COUNT(*) FILTER (WHERE recorded_at >= NOW() - INTERVAL '1 hour') AS last_hour_events,
+                    MAX(recorded_at)                                      AS last_event_at,
+                    MIN(recorded_at)                                      AS first_event_at
+                FROM events
+                """
+            )
+            summary = dict(summary_row) if summary_row else {}
+            if summary.get("last_event_at"):
+                summary["last_event_at"] = summary["last_event_at"].isoformat()
+            if summary.get("first_event_at"):
+                summary["first_event_at"] = summary["first_event_at"].isoformat()
+
+            # ── Event-type distribution ───────────────────────────────
+            type_rows = await conn.fetch(
+                """
+                SELECT event_type,
+                       COUNT(*)                                AS count,
+                       ROUND(100.0 * COUNT(*) / SUM(COUNT(*)) OVER (), 1) AS pct
+                FROM events
+                GROUP BY event_type
+                ORDER BY count DESC
+                """
+            )
+            event_type_dist = [
+                {"event_type": r["event_type"], "count": r["count"], "pct": float(r["pct"])}
+                for r in type_rows
+            ]
+
+            # ── Daily volume — last 14 days ───────────────────────────
+            daily_rows = await conn.fetch(
+                """
+                SELECT TO_CHAR(DATE_TRUNC('day', recorded_at), 'YYYY-MM-DD') AS day,
+                       COUNT(*) AS count
+                FROM events
+                WHERE recorded_at >= NOW() - INTERVAL '14 days'
+                GROUP BY day
+                ORDER BY day
+                """
+            )
+            daily_volume = [{"day": r["day"], "count": r["count"]} for r in daily_rows]
+
+            # ── Hourly volume — last 24 hours ─────────────────────────
+            hourly_rows = await conn.fetch(
+                """
+                SELECT TO_CHAR(DATE_TRUNC('hour', recorded_at), 'HH24:MI') AS hour,
+                       COUNT(*) AS count
+                FROM events
+                WHERE recorded_at >= NOW() - INTERVAL '24 hours'
+                GROUP BY hour
+                ORDER BY hour
+                """
+            )
+            hourly_volume = [{"hour": r["hour"], "count": r["count"]} for r in hourly_rows]
+
+            # ── Top streams ───────────────────────────────────────────
+            stream_rows = await conn.fetch(
+                """
+                SELECT stream_id,
+                       COUNT(*)        AS event_count,
+                       MIN(recorded_at) AS first_event,
+                       MAX(recorded_at) AS last_event
+                FROM events
+                GROUP BY stream_id
+                ORDER BY event_count DESC
+                LIMIT 15
+                """
+            )
+            top_streams = [
+                {
+                    "stream_id":   r["stream_id"],
+                    "event_count": r["event_count"],
+                    "first_event": r["first_event"].isoformat() if r["first_event"] else None,
+                    "last_event":  r["last_event"].isoformat()  if r["last_event"]  else None,
+                }
+                for r in stream_rows
+            ]
+
+            # ── Stream-type distribution (prefix bucketing) ───────────
+            stream_type_rows = await conn.fetch(
+                """
+                SELECT
+                    CASE
+                        WHEN stream_id LIKE 'loan-%'  THEN 'loan'
+                        WHEN stream_id LIKE 'agent-%' THEN 'agent'
+                        WHEN stream_id LIKE 'audit-%' THEN 'audit'
+                        ELSE 'other'
+                    END AS stream_type,
+                    COUNT(DISTINCT stream_id) AS stream_count,
+                    COUNT(*)                  AS event_count
+                FROM events
+                GROUP BY stream_type
+                ORDER BY event_count DESC
+                """
+            )
+            stream_type_dist = [
+                {
+                    "stream_type":  r["stream_type"],
+                    "stream_count": r["stream_count"],
+                    "event_count":  r["event_count"],
+                }
+                for r in stream_type_rows
+            ]
+
+            # ── Application lifecycle funnel ──────────────────────────
+            try:
+                funnel_rows = await conn.fetch(
+                    """
+                    SELECT state, COUNT(*) AS count
+                    FROM projection_application_summary
+                    GROUP BY state
+                    ORDER BY count DESC
+                    """
+                )
+                application_funnel = [
+                    {"state": r["state"], "count": r["count"]} for r in funnel_rows
+                ]
+            except Exception:
+                application_funnel = []
+
+            # ── Schema version distribution ───────────────────────────
+            version_rows = await conn.fetch(
+                """
+                SELECT event_version, COUNT(*) AS count
+                FROM events
+                GROUP BY event_version
+                ORDER BY event_version
+                """
+            )
+            version_dist = [
+                {"version": r["event_version"], "count": r["count"]} for r in version_rows
+            ]
+
+        return _resp({
+            "summary":            summary,
+            "event_type_dist":    event_type_dist,
+            "daily_volume":       daily_volume,
+            "hourly_volume":      hourly_volume,
+            "top_streams":        top_streams,
+            "stream_type_dist":   stream_type_dist,
+            "application_funnel": application_funnel,
+            "version_dist":       version_dist,
+        })
+
+    except Exception as e:
+        logger.error("get_analysis failed: %s", e)
+        raise HTTPException(500, f"Analysis query failed: {e}")

@@ -25,6 +25,27 @@
       <span class="text-gray-600 text-xs hidden md:block">| Loan Pipeline Dashboard</span>
     </div>
     <div class="flex items-center gap-5 text-xs text-gray-500">
+      <!-- Health indicator -->
+      <span class="hidden md:flex items-center gap-1.5">
+        <span
+          :class="{
+            'bg-green-400': healthStatus === 'ok',
+            'bg-yellow-400 animate-pulse': healthStatus === 'degraded',
+            'bg-red-500 animate-pulse': healthStatus === 'down',
+            'bg-gray-600': healthStatus === 'unknown',
+          }"
+          class="w-2 h-2 rounded-full inline-block"
+        ></span>
+        <span
+          :class="{
+            'text-green-400': healthStatus === 'ok',
+            'text-yellow-400': healthStatus === 'degraded',
+            'text-red-400': healthStatus === 'down',
+            'text-gray-500': healthStatus === 'unknown',
+          }"
+          x-text="healthStatus === 'ok' ? 'healthy' : healthStatus"
+        ></span>
+      </span>
       <span>Updated: <span x-text="lastUpdated" class="text-gray-400"></span></span>
       <span class="hidden md:inline">Lag: <span x-text="lagStr" class="text-gray-400"></span></span>
       <button
@@ -33,6 +54,23 @@
       >&#8635; Refresh</button>
     </div>
   </header>
+
+  <!-- ── Error toast ──────────────────────────────────────────────── -->
+  <div
+    x-show="errorToast"
+    x-transition:enter="transition ease-out duration-200"
+    x-transition:enter-start="opacity-0 translate-y-2"
+    x-transition:enter-end="opacity-100 translate-y-0"
+    x-transition:leave="transition ease-in duration-150"
+    x-transition:leave-start="opacity-100"
+    x-transition:leave-end="opacity-0"
+    class="fixed bottom-5 right-5 z-50 bg-red-900 border border-red-700 text-red-200 text-xs px-4 py-3 rounded-lg shadow-xl max-w-sm flex items-start gap-3"
+    x-cloak
+  >
+    <span class="text-red-400 mt-0.5">⚠</span>
+    <span x-text="errorToast" class="flex-1"></span>
+    <button @click="errorToast = null" class="text-red-400 hover:text-red-200 ml-2">✕</button>
+  </div>
 
   <!-- ── Tabs ────────────────────────────────────────────────────── -->
   <nav class="bg-gray-900 border-b border-gray-800 px-6 flex gap-0">
@@ -864,6 +902,8 @@
             <span x-text="(globalOffset + 1).toLocaleString()"></span>–<span
               x-text="Math.min(globalOffset + globalLimit, globalTotal).toLocaleString()"></span>
             of <span x-text="globalTotal.toLocaleString()"></span>
+            <span x-show="globalTotal > globalLimit" class="ml-2 text-gray-600"
+              x-text="'· ' + globalPageInfo"></span>
           </span>
           <div class="flex gap-2">
             <button
@@ -982,6 +1022,294 @@
 
     </div><!-- /global -->
 
+    <!-- ════════════════════════════════════════════════════════════
+         ANALYSIS TAB
+    ═════════════════════════════════════════════════════════════ -->
+    <div x-show="activeTab === 'analysis'" x-cloak>
+
+      <!-- Toolbar -->
+      <div class="flex items-center justify-between mb-5">
+        <div>
+          <h2 class="text-white font-semibold text-sm tracking-widest uppercase">Event Store Analysis</h2>
+          <p class="text-gray-600 text-xs mt-0.5">Live report from the <code class="text-indigo-400">events</code> table</p>
+        </div>
+        <button
+          @click="loadAnalysis()"
+          :disabled="loadingAnalysis"
+          class="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-gray-300 rounded transition-colors text-xs"
+        >&#8635; Refresh</button>
+      </div>
+
+      <!-- Loading -->
+      <div x-show="loadingAnalysis" class="text-center py-20 text-gray-600 text-sm">
+        <div class="animate-pulse">Loading analysis…</div>
+      </div>
+
+      <!-- No data -->
+      <div x-show="!loadingAnalysis && !analysis" class="text-center py-20 text-gray-600 text-sm">
+        No data yet. Click Refresh or run the pipeline to generate events.
+      </div>
+
+      <!-- Report body -->
+      <div x-show="!loadingAnalysis && analysis" class="space-y-6">
+
+        <!-- ── Row 1: Summary KPI cards ─────────────────────────── -->
+        <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3">
+
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <div class="text-gray-500 text-xs tracking-widest mb-1">TOTAL EVENTS</div>
+            <div class="text-3xl font-bold text-white"
+              x-text="(analysis?.summary?.total_events ?? 0).toLocaleString()"></div>
+          </div>
+
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <div class="text-gray-500 text-xs tracking-widest mb-1">STREAMS</div>
+            <div class="text-3xl font-bold text-indigo-400"
+              x-text="(analysis?.summary?.total_streams ?? 0).toLocaleString()"></div>
+          </div>
+
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <div class="text-gray-500 text-xs tracking-widest mb-1">TODAY</div>
+            <div class="text-3xl font-bold text-green-400"
+              x-text="(analysis?.summary?.today_events ?? 0).toLocaleString()"></div>
+          </div>
+
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+            <div class="text-gray-500 text-xs tracking-widest mb-1">LAST HOUR</div>
+            <div class="text-3xl font-bold text-cyan-400"
+              x-text="(analysis?.summary?.last_hour_events ?? 0).toLocaleString()"></div>
+          </div>
+
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 col-span-2">
+            <div class="text-gray-500 text-xs tracking-widest mb-1">LAST EVENT</div>
+            <div class="text-sm font-mono text-gray-300"
+              x-text="analysis?.summary?.last_event_at ? fmtTime(analysis.summary.last_event_at) : '—'"></div>
+            <div class="text-gray-600 text-xs mt-1">
+              First: <span x-text="analysis?.summary?.first_event_at ? fmtTime(analysis.summary.first_event_at) : '—'"></span>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ── Row 2: Event-type distribution + Stream-type dist ─── -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+          <!-- Event type distribution -->
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+            <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Event Type Distribution</h3>
+            <div class="space-y-2 max-h-80 overflow-y-auto pr-1">
+              <template x-for="(et, idx) in (analysis?.event_type_dist ?? [])" :key="et.event_type">
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="text-gray-300 text-xs font-mono truncate max-w-48"
+                      x-text="et.event_type"></span>
+                    <span class="text-gray-500 text-xs ml-2 whitespace-nowrap">
+                      <span x-text="et.count.toLocaleString()"></span>
+                      <span class="text-gray-700 ml-1">(<span x-text="et.pct"></span>%)</span>
+                    </span>
+                  </div>
+                  <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all duration-500"
+                      :class="typeBarColor(idx)"
+                      :style="'width:' + barPct(et.count, analysis.event_type_dist[0]?.count ?? 1)"
+                    ></div>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!analysis?.event_type_dist?.length"
+                class="text-gray-600 text-xs py-4">No events recorded yet.</div>
+            </div>
+          </div>
+
+          <!-- Stream type breakdown + version dist stacked -->
+          <div class="space-y-5">
+
+            <!-- Stream-type breakdown -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Stream Type Breakdown</h3>
+              <div class="space-y-3">
+                <template x-for="st in (analysis?.stream_type_dist ?? [])" :key="st.stream_type">
+                  <div class="flex items-center gap-3">
+                    <span class="text-gray-400 text-xs font-mono w-12 text-right" x-text="st.stream_type"></span>
+                    <div class="flex-1 h-3 bg-gray-800 rounded-full overflow-hidden">
+                      <div
+                        class="h-full bg-indigo-600 rounded-full transition-all duration-500"
+                        :style="'width:' + barPct(st.event_count, (analysis.stream_type_dist[0]?.event_count ?? 1))"
+                      ></div>
+                    </div>
+                    <span class="text-gray-400 text-xs w-20 text-right whitespace-nowrap">
+                      <span x-text="st.event_count.toLocaleString()"></span>
+                      <span class="text-gray-700"> evts</span>
+                    </span>
+                    <span class="text-gray-600 text-xs w-14 text-right whitespace-nowrap"
+                      x-text="st.stream_count + ' streams'"></span>
+                  </div>
+                </template>
+                <div x-show="!analysis?.stream_type_dist?.length"
+                  class="text-gray-600 text-xs">No stream data.</div>
+              </div>
+            </div>
+
+            <!-- Schema version distribution -->
+            <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+              <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-3">Schema Version Distribution</h3>
+              <div class="flex flex-wrap gap-3">
+                <template x-for="v in (analysis?.version_dist ?? [])" :key="v.version">
+                  <div class="bg-gray-800 border border-gray-700 rounded px-3 py-2 text-center">
+                    <div class="text-indigo-400 font-bold text-lg" x-text="'v' + v.version"></div>
+                    <div class="text-gray-500 text-xs" x-text="v.count.toLocaleString() + ' events'"></div>
+                  </div>
+                </template>
+                <div x-show="!analysis?.version_dist?.length"
+                  class="text-gray-600 text-xs">No version data.</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <!-- ── Row 3: Daily volume bar chart (14 days) ─────────────── -->
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+          <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Daily Event Volume — Last 14 Days</h3>
+          <div x-show="analysis?.daily_volume?.length">
+            <div class="flex items-end gap-1 h-28">
+              <template x-for="d in (analysis?.daily_volume ?? [])" :key="d.day">
+                <div class="flex-1 flex flex-col items-center gap-1 group relative">
+                  <div
+                    class="w-full bg-indigo-600 hover:bg-indigo-500 rounded-t transition-all cursor-default"
+                    :style="'height:' + barPct(d.count, Math.max(...(analysis.daily_volume.map(x => x.count) ?? [1])))"
+                    :title="d.day + ': ' + d.count + ' events'"
+                  ></div>
+                  <!-- Tooltip on hover -->
+                  <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-700
+                              text-xs text-gray-300 px-2 py-1 rounded whitespace-nowrap hidden group-hover:block z-10 pointer-events-none">
+                    <span x-text="d.day"></span><br>
+                    <span class="font-bold text-indigo-400" x-text="d.count.toLocaleString()"></span> events
+                  </div>
+                </div>
+              </template>
+            </div>
+            <!-- X-axis labels: first + last -->
+            <div class="flex justify-between text-gray-600 text-xs mt-1 font-mono">
+              <span x-text="analysis?.daily_volume?.[0]?.day ?? ''"></span>
+              <span x-text="analysis?.daily_volume?.[analysis.daily_volume.length - 1]?.day ?? ''"></span>
+            </div>
+          </div>
+          <div x-show="!analysis?.daily_volume?.length" class="text-gray-600 text-xs py-6">
+            No data for the last 14 days.
+          </div>
+        </div>
+
+        <!-- ── Row 4: Hourly volume (last 24 h) + Application funnel ── -->
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
+
+          <!-- Hourly volume -->
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+            <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Hourly Volume — Last 24 Hours</h3>
+            <div x-show="analysis?.hourly_volume?.length">
+              <div class="flex items-end gap-0.5 h-24">
+                <template x-for="h in (analysis?.hourly_volume ?? [])" :key="h.hour">
+                  <div class="flex-1 flex flex-col items-center group relative">
+                    <div
+                      class="w-full bg-cyan-700 hover:bg-cyan-500 rounded-t transition-all cursor-default"
+                      :style="'height:' + barPct(h.count, Math.max(...(analysis.hourly_volume.map(x => x.count) ?? [1])))"
+                    ></div>
+                    <div class="absolute bottom-full mb-1 left-1/2 -translate-x-1/2 bg-gray-800 border border-gray-700
+                                text-xs text-gray-300 px-2 py-1 rounded whitespace-nowrap hidden group-hover:block z-10 pointer-events-none">
+                      <span x-text="h.hour"></span>: <span class="text-cyan-400 font-bold" x-text="h.count"></span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <div class="flex justify-between text-gray-600 text-xs mt-1 font-mono">
+                <span x-text="analysis?.hourly_volume?.[0]?.hour ?? ''"></span>
+                <span x-text="analysis?.hourly_volume?.[analysis.hourly_volume.length - 1]?.hour ?? ''"></span>
+              </div>
+            </div>
+            <div x-show="!analysis?.hourly_volume?.length" class="text-gray-600 text-xs py-4">
+              No events in the last 24 hours.
+            </div>
+          </div>
+
+          <!-- Application lifecycle funnel -->
+          <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+            <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Application Lifecycle Funnel</h3>
+            <div class="space-y-2">
+              <template x-for="f in (analysis?.application_funnel ?? [])" :key="f.state">
+                <div>
+                  <div class="flex items-center justify-between mb-0.5">
+                    <span class="text-xs font-mono" :class="stateColor(f.state)" x-text="f.state"></span>
+                    <span class="text-gray-400 text-xs" x-text="f.count.toLocaleString()"></span>
+                  </div>
+                  <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
+                    <div
+                      class="h-full rounded-full transition-all duration-500"
+                      :class="{
+                        'bg-green-500': f.state === 'FINAL_APPROVED',
+                        'bg-red-500':   f.state === 'FINAL_DECLINED' || f.state === 'DECLINED_PENDING_HUMAN',
+                        'bg-indigo-500': f.state === 'SUBMITTED' || f.state === 'AWAITING_ANALYSIS',
+                        'bg-purple-500': f.state === 'ANALYSIS_COMPLETE',
+                        'bg-yellow-500': f.state === 'COMPLIANCE_REVIEW' || f.state === 'PENDING_DECISION',
+                        'bg-lime-500':   f.state === 'APPROVED_PENDING_HUMAN',
+                        'bg-gray-500':   !['FINAL_APPROVED','FINAL_DECLINED','SUBMITTED','AWAITING_ANALYSIS',
+                                           'ANALYSIS_COMPLETE','COMPLIANCE_REVIEW','PENDING_DECISION',
+                                           'APPROVED_PENDING_HUMAN','DECLINED_PENDING_HUMAN'].includes(f.state),
+                      }"
+                      :style="'width:' + barPct(f.count, Math.max(...(analysis.application_funnel.map(x => x.count) ?? [1])))"
+                    ></div>
+                  </div>
+                </div>
+              </template>
+              <div x-show="!analysis?.application_funnel?.length"
+                class="text-gray-600 text-xs py-4">No application data.</div>
+            </div>
+          </div>
+
+        </div>
+
+        <!-- ── Row 5: Top streams table ────────────────────────────── -->
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-5">
+          <h3 class="text-gray-400 text-xs tracking-widest uppercase mb-4">Top 15 Streams by Event Count</h3>
+          <div class="overflow-x-auto">
+            <table class="w-full text-xs">
+              <thead>
+                <tr class="text-gray-600 border-b border-gray-800">
+                  <th class="text-left pb-2 font-normal tracking-wider">#</th>
+                  <th class="text-left pb-2 font-normal tracking-wider">Stream ID</th>
+                  <th class="text-right pb-2 font-normal tracking-wider">Events</th>
+                  <th class="text-left pb-2 font-normal tracking-wider pl-4">Activity Bar</th>
+                  <th class="text-right pb-2 font-normal tracking-wider">Last Event</th>
+                </tr>
+              </thead>
+              <tbody>
+                <template x-for="(s, i) in (analysis?.top_streams ?? [])" :key="s.stream_id">
+                  <tr class="border-b border-gray-800/50 hover:bg-gray-800/30 transition-colors">
+                    <td class="py-2 text-gray-600" x-text="i + 1"></td>
+                    <td class="py-2 font-mono text-indigo-300 max-w-xs truncate" x-text="s.stream_id"></td>
+                    <td class="py-2 text-right text-white font-semibold" x-text="s.event_count.toLocaleString()"></td>
+                    <td class="py-2 pl-4 w-48">
+                      <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
+                        <div
+                          class="h-full bg-indigo-500 rounded-full"
+                          :style="'width:' + barPct(s.event_count, analysis.top_streams[0]?.event_count ?? 1)"
+                        ></div>
+                      </div>
+                    </td>
+                    <td class="py-2 text-right text-gray-500 font-mono" x-text="s.last_event ? fmtTime(s.last_event) : '—'"></td>
+                  </tr>
+                </template>
+                <tr x-show="!analysis?.top_streams?.length">
+                  <td colspan="5" class="text-center py-8 text-gray-600">No stream data.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div><!-- /report body -->
+    </div><!-- /analysis -->
+
   </main>
 
   <!-- ── Alpine.js app ────────────────────────────────────────────── -->
@@ -998,6 +1326,7 @@
         { id: 'run',          label: '▶ Run Pipeline' },
         { id: 'demo',         label: '⚡ Demo Suite' },
         { id: 'global',       label: '🗄 Global Store' },
+        { id: 'analysis',     label: '📊 Analysis' },
       ],
 
       // Applications
@@ -1081,6 +1410,17 @@
 
       lagStr: '—',
 
+      // Analysis report
+      analysis: null,
+      loadingAnalysis: false,
+
+      // Health
+      healthStatus: 'unknown',  // 'ok' | 'degraded' | 'down' | 'unknown'
+
+      // Error toast
+      errorToast: null,
+      _errorToastTimer: null,
+
       // ── Lifecycle ──────────────────────────────────────────────
 
       async init() {
@@ -1088,13 +1428,21 @@
         await this.loadStats()
         await this.loadLag()
         await this.loadCompanies()
+        await this.loadHealth()
         setInterval(() => {
           if (this.activeTab === 'applications') {
             this.loadApplications()
             this.loadStats()
           }
           this.loadLag()
+          this.loadHealth()
         }, 15000)
+      },
+
+      showError(msg) {
+        this.errorToast = msg
+        if (this._errorToastTimer) clearTimeout(this._errorToastTimer)
+        this._errorToastTimer = setTimeout(() => { this.errorToast = null }, 6000)
       },
 
       async refresh() {
@@ -1113,30 +1461,48 @@
           if (this.globalEventTypes.length === 0) await this.loadGlobalEventTypes()
           if (this.globalEvents.length === 0) await this.loadGlobal()
         }
+        if (tab === 'analysis' && !this.analysis) await this.loadAnalysis()
       },
 
       // ── Data loaders ───────────────────────────────────────────
+
+      async loadHealth() {
+        try {
+          const r = await fetch('/health')
+          if (!r.ok) { this.healthStatus = 'down'; return }
+          const data = await r.json()
+          this.healthStatus = data.status ?? 'unknown'
+        } catch (e) { this.healthStatus = 'down' }
+      },
 
       async loadApplications() {
         this.loadingApps = true
         try {
           const r = await fetch('/api/applications')
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           this.applications = await r.json()
           this.lastUpdated = new Date().toLocaleTimeString()
-        } catch (e) { console.error(e) }
+        } catch (e) {
+          console.error(e)
+          this.showError('Failed to load applications: ' + e.message)
+        }
         finally { this.loadingApps = false }
       },
 
       async loadStats() {
         try {
           const r = await fetch('/api/stats')
-          this.stats = await r.json()
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          const data = await r.json()
+          if (data.error) console.warn('Stats partial error:', data.error)
+          this.stats = data
         } catch (e) { console.error(e) }
       },
 
       async loadLag() {
         try {
           const r = await fetch('/api/lag')
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           const lags = await r.json()
           const vals = Object.values(lags).filter(v => typeof v === 'number')
           if (vals.length > 0) {
@@ -1169,9 +1535,13 @@
         this.pipelineEvents = []
         try {
           const r = await fetch(`/api/applications/${this.selectedAppId}/events`)
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           const evts = await r.json()
           this.pipelineEvents = evts.map(e => ({ ...e, expanded: false }))
-        } catch (e) { console.error(e) }
+        } catch (e) {
+          console.error(e)
+          this.showError('Failed to load pipeline events: ' + e.message)
+        }
         finally { this.loadingPipeline = false }
       },
 
@@ -1181,8 +1551,12 @@
         this.complianceRules = []
         try {
           const r = await fetch(`/api/applications/${this.complianceAppId}/compliance`)
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           this.complianceRules = await r.json()
-        } catch (e) { console.error(e) }
+        } catch (e) {
+          console.error(e)
+          this.showError('Failed to load compliance rules: ' + e.message)
+        }
         finally { this.loadingCompliance = false }
       },
 
@@ -1190,8 +1564,12 @@
         this.loadingAgents = true
         try {
           const r = await fetch('/api/agents')
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           this.agents = await r.json()
-        } catch (e) { console.error(e) }
+        } catch (e) {
+          console.error(e)
+          this.showError('Failed to load agent data: ' + e.message)
+        }
         finally { this.loadingAgents = false }
       },
 
@@ -1214,6 +1592,7 @@
       async loadCompanies() {
         try {
           const r = await fetch('/api/companies')
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           this.runCompanies = await r.json()
           if (this.runCompanies.length && !this.runCompanies.includes(this.runCompanyId))
             this.runCompanyId = this.runCompanies[0]
@@ -1257,6 +1636,15 @@
 
       async startRun() {
         if (this.runStatus === 'running') return
+        // Validate inputs
+        if (!this.runCompanyId) {
+          this.showError('Please select a company before running the pipeline.')
+          return
+        }
+        if (!this.runAmount || Number(this.runAmount) <= 0) {
+          this.showError('Loan amount must be greater than 0.')
+          return
+        }
         // Reset
         this.runLines = []
         this.runResult = null
@@ -1274,6 +1662,7 @@
               app_id:     this.runAppId.trim() || null,
             }),
           })
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           const data = await r.json()
           this.runJobId       = data.job_id
           this.runAppIdActual = data.app_id
@@ -1282,6 +1671,7 @@
           this._runPollTimer = setInterval(() => this._pollRun(), 1500)
         } catch (e) {
           this.runStatus = 'error'
+          this.showError('Failed to start pipeline: ' + e.message)
           this.runLines.push('Failed to start pipeline: ' + e)
         }
       },
@@ -1375,20 +1765,38 @@
         }
       },
 
+      get explorerPageInfo() {
+        if (this.explorerTotal === 0) return ''
+        const page = Math.floor(this.explorerOffset / this.explorerLimit) + 1
+        const pages = Math.ceil(this.explorerTotal / this.explorerLimit)
+        return `Page ${page} of ${pages} (${this.explorerTotal} events)`
+      },
+
       async _fetchStream() {
         this.loadingExplorer = true
         this.explorerEvents = []
         try {
           const url = `/api/stream/${this.explorerStreamId}?limit=${this.explorerLimit}&offset=${this.explorerOffset}`
           const r = await fetch(url)
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           const data = await r.json()
           this.explorerTotal = data.total ?? 0
           this.explorerEvents = (data.events ?? []).map(e => ({ ...e, expanded: false }))
-        } catch (e) { console.error(e) }
+        } catch (e) {
+          console.error(e)
+          this.showError('Failed to load stream: ' + e.message)
+        }
         finally { this.loadingExplorer = false }
       },
 
       // ── Global Event Store ─────────────────────────────────────
+
+      get globalPageInfo() {
+        if (this.globalTotal === 0) return ''
+        const page = Math.floor(this.globalOffset / this.globalLimit) + 1
+        const pages = Math.ceil(this.globalTotal / this.globalLimit)
+        return `Page ${page} of ${pages} (${this.globalTotal.toLocaleString()} events)`
+      },
 
       async loadGlobal() {
         this.loadingGlobal = true
@@ -1401,18 +1809,76 @@
           if (this.globalEventTypeFilter)    params.set('event_type',    this.globalEventTypeFilter)
           if (this.globalStreamPrefixFilter) params.set('stream_prefix', this.globalStreamPrefixFilter)
           const r = await fetch(`/api/events/global?${params}`)
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           const data = await r.json()
           this.globalTotal  = data.total ?? 0
           this.globalEvents = (data.events ?? []).map(e => ({ ...e, expanded: false }))
-        } catch (e) { console.error(e) }
+        } catch (e) {
+          console.error(e)
+          this.showError('Failed to load global events: ' + e.message)
+        }
         finally { this.loadingGlobal = false }
       },
 
       async loadGlobalEventTypes() {
         try {
           const r = await fetch('/api/events/global/types')
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
           this.globalEventTypes = await r.json()
         } catch (e) { console.error(e) }
+      },
+
+      // ── Analysis Report ────────────────────────────────────────
+
+      async loadAnalysis() {
+        this.loadingAnalysis = true
+        try {
+          const r = await fetch('/api/analysis')
+          if (!r.ok) throw new Error(`HTTP ${r.status}`)
+          this.analysis = await r.json()
+        } catch (e) {
+          console.error(e)
+          this.showError('Failed to load analysis: ' + e.message)
+        } finally {
+          this.loadingAnalysis = false
+        }
+      },
+
+      // Return a CSS width% string for a bar chart bar, capped at 100%
+      barPct(value, maxValue) {
+        if (!maxValue) return '0%'
+        return Math.min(100, (value / maxValue) * 100).toFixed(1) + '%'
+      },
+
+      // Short label for event type (strip trailing "Completed"/"Requested" etc.)
+      shortEventType(et) {
+        return et.replace(/([a-z])([A-Z])/g, '$1 $2')
+      },
+
+      // Colour class for application lifecycle state
+      stateColor(state) {
+        const map = {
+          SUBMITTED:               'text-blue-400',
+          AWAITING_ANALYSIS:       'text-indigo-400',
+          ANALYSIS_COMPLETE:       'text-purple-400',
+          COMPLIANCE_REVIEW:       'text-yellow-400',
+          PENDING_DECISION:        'text-orange-400',
+          APPROVED_PENDING_HUMAN:  'text-lime-400',
+          DECLINED_PENDING_HUMAN:  'text-red-400',
+          FINAL_APPROVED:          'text-green-400',
+          FINAL_DECLINED:          'text-red-500',
+        }
+        return map[state] ?? 'text-gray-400'
+      },
+
+      // Bar colour class for event type (cycle through palette)
+      typeBarColor(index) {
+        const palette = [
+          'bg-indigo-500', 'bg-purple-500', 'bg-blue-500', 'bg-cyan-500',
+          'bg-teal-500',   'bg-green-500',  'bg-lime-500', 'bg-yellow-500',
+          'bg-orange-500', 'bg-red-500',
+        ]
+        return palette[index % palette.length]
       },
 
       async globalNext() {
