@@ -34,7 +34,8 @@ if _ROOT not in sys.path:
 from dotenv import load_dotenv
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from src.event_store import EventStore
@@ -91,6 +92,14 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Apex Dashboard", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ── JSON serialization ────────────────────────────────────────────────────────
@@ -378,6 +387,57 @@ async def list_companies():
         return _resp([])
     companies = sorted(p.name for p in docs_root.iterdir() if p.is_dir())
     return _resp(companies)
+
+
+# ── Document upload ───────────────────────────────────────────────────────────
+
+_ALLOWED_EXTENSIONS = {".pdf", ".xlsx", ".xls", ".csv"}
+_ALLOWED_STEMS = ["income_statement", "balance_sheet", "financial_statements", "financial_summary", "application_proposal"]
+
+
+@app.get("/api/documents/{company_id}")
+async def list_documents(company_id: str):
+    """List files already present for a company."""
+    docs_dir = Path(_ROOT) / "documents" / company_id
+    if not docs_dir.is_dir():
+        return _resp([])
+    files = [
+        {"name": f.name, "size": f.stat().st_size, "ext": f.suffix.lower()}
+        for f in sorted(docs_dir.iterdir())
+        if f.is_file() and f.suffix.lower() in _ALLOWED_EXTENSIONS
+    ]
+    return _resp(files)
+
+
+@app.post("/api/documents/{company_id}/upload")
+async def upload_document(company_id: str, file: UploadFile = File(...)):
+    """Upload a PDF/Excel/CSV document for a company."""
+    if not company_id.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(400, "Invalid company_id")
+    suffix = Path(file.filename or "").suffix.lower()
+    if suffix not in _ALLOWED_EXTENSIONS:
+        raise HTTPException(400, f"File type '{suffix}' not allowed. Use: {sorted(_ALLOWED_EXTENSIONS)}")
+
+    docs_dir = Path(_ROOT) / "documents" / company_id
+    docs_dir.mkdir(parents=True, exist_ok=True)
+
+    dest = docs_dir / (file.filename or "upload")
+    contents = await file.read()
+    dest.write_bytes(contents)
+
+    return _resp({"saved": str(dest.relative_to(_ROOT)), "size": len(contents)})
+
+
+@app.delete("/api/documents/{company_id}/{filename}")
+async def delete_document(company_id: str, filename: str):
+    """Delete a document file for a company."""
+    if not company_id.replace("-", "").replace("_", "").isalnum():
+        raise HTTPException(400, "Invalid company_id")
+    target = Path(_ROOT) / "documents" / company_id / filename
+    if not target.exists() or not target.is_file():
+        raise HTTPException(404, "File not found")
+    target.unlink()
+    return _resp({"deleted": filename})
 
 
 # ── Pipeline runner ───────────────────────────────────────────────────────────

@@ -58,3 +58,21 @@ desktop.ini
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
 logs/
+
+# ── Next.js (dashboard-ui) ───────────────────────────────────────────────────
+dashboard-ui/.next/
+dashboard-ui/out/
+dashboard-ui/node_modules/
+dashboard-ui/.env.local
+dashboard-ui/.env.*.local
+dashboard-ui/npm-debug.log*
+dashboard-ui/yarn-debug.log*
+dashboard-ui/yarn-error.log*
+
+# ── Node (general) ────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnp
+.pnp.js
