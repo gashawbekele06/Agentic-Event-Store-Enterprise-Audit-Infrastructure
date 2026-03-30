@@ -378,6 +378,34 @@ async def health():
     return _resp(result)
 
 
+# ── Projection checkpoints ────────────────────────────────────────────────────
+
+@app.get("/api/checkpoints")
+async def get_checkpoints():
+    """Live projection checkpoint positions and lag from public.projection_checkpoints."""
+    async with _store._pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT
+                projection_name,
+                last_position,
+                updated_at,
+                (SELECT COALESCE(MAX(global_position), 0) FROM events) AS latest_global,
+                (SELECT COALESCE(MAX(global_position), 0) FROM events) - last_position AS lag_events
+            FROM projection_checkpoints
+            ORDER BY projection_name
+        """)
+        result = []
+        for r in rows:
+            result.append({
+                "projection_name": r["projection_name"],
+                "last_position":   int(r["last_position"]),
+                "latest_global":   int(r["latest_global"]),
+                "lag_events":      int(r["lag_events"]),
+                "updated_at":      r["updated_at"].isoformat() if r["updated_at"] else None,
+            })
+        return _resp(result)
+
+
 # ── Available companies ───────────────────────────────────────────────────────
 
 @app.get("/api/companies")

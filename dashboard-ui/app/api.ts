@@ -49,6 +49,14 @@ export const api = {
 
   analysis: () => get<Record<string, unknown>>("/api/analysis"),
 
+  checkpoints: () => get<{
+    projection_name: string;
+    last_position: number;
+    latest_global: number;
+    lag_events: number;
+    updated_at: string | null;
+  }[]>("/api/checkpoints"),
+
   listDocuments: (company_id: string) =>
     get<{ name: string; size: number; ext: string }[]>(`/api/documents/${company_id}`),
 
@@ -63,10 +71,10 @@ export const api = {
     return res.json() as Promise<{ saved: string; size: number }>;
   },
 
-  deleteDocument: (company_id: string, filename: string) => {
-    return fetch(`${BASE}/api/documents/${company_id}/${encodeURIComponent(filename)}`, {
-      method: "DELETE",
-    }).then((r) => { if (!r.ok) throw new Error(`${r.status}`); return r.json(); });
+  deleteDocument: async (company_id: string, filename: string) => {
+    const r = await fetch(`${BASE}/api/documents/${company_id}/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    if (!r.ok) throw new Error(`${r.status}`);
+    return r.json();
   },
 
   runPipeline: (company_id: string, amount: number, app_id?: string) =>

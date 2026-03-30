@@ -1,5 +1,5 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
   PieChart, Pie, Cell, LineChart, Line, Legend,
@@ -50,10 +50,20 @@ function KvRows({ rows }: { rows: { label: string; value: string }[] }) {
   );
 }
 
+interface Checkpoint {
+  projection_name: string;
+  last_position: number;
+  latest_global: number;
+  lag_events: number;
+  updated_at: string | null;
+}
+
 export default function AnalysisTab() {
-  const [data, setData] = useState<D | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [data, setData]               = useState<D | null>(null);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
+  const [checkpoints, setCheckpoints] = useState<Checkpoint[]>([]);
+  const [cpLoading, setCpLoading]     = useState(true);
 
   async function load() {
     setLoading(true);
@@ -67,7 +77,23 @@ export default function AnalysisTab() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  const refreshCheckpoints = useCallback(async () => {
+    setCpLoading(true);
+    try {
+      setCheckpoints(await api.checkpoints());
+    } catch {
+      // non-fatal
+    } finally {
+      setCpLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    load();
+    refreshCheckpoints();
+    const id = setInterval(refreshCheckpoints, 5000);
+    return () => clearInterval(id);
+  }, [refreshCheckpoints]);
 
   if (loading) return <div className="text-center py-20 text-gray-600 text-xs animate-pulse">Loading analysis across all 12 database tables…</div>;
   if (error)   return <div className="bg-red-950 border border-red-800 rounded-lg p-4 text-red-400 text-xs">{error}</div>;
@@ -140,6 +166,81 @@ export default function AnalysisTab() {
       <div className="flex items-center justify-between">
         <h2 className="text-white text-sm font-semibold tracking-widest uppercase">Analysis Report</h2>
         <button onClick={load} className="px-3 py-1.5 bg-gray-800 hover:bg-gray-700 rounded text-xs">↻ Refresh</button>
+      </div>
+
+      {/* ── Projection Checkpoints (live, polls every 5s) ── */}
+      <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-gray-800">
+          <div>
+            <span className="text-gray-300 text-xs font-semibold">Projection Checkpoints</span>
+            <span className="text-gray-600 text-xs ml-2">public.projection_checkpoints · auto-refresh 5s</span>
+          </div>
+          <div className="flex items-center gap-2">
+            {cpLoading
+              ? <span className="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" />
+              : <span className="w-2 h-2 rounded-full bg-green-500" />}
+            <button onClick={refreshCheckpoints} className="text-gray-600 hover:text-gray-400 text-xs">↻</button>
+          </div>
+        </div>
+        <table className="w-full text-xs">
+          <thead>
+            <tr className="text-gray-600 border-b border-gray-800">
+              <th className="text-left px-4 py-2 font-normal tracking-wider">Projection</th>
+              <th className="text-right px-4 py-2 font-normal tracking-wider">Last Position</th>
+              <th className="text-right px-4 py-2 font-normal tracking-wider">Latest Global</th>
+              <th className="text-right px-4 py-2 font-normal tracking-wider">Lag (events)</th>
+              <th className="text-left px-4 py-2 font-normal tracking-wider">Updated At</th>
+              <th className="text-left px-4 py-2 font-normal tracking-wider">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {checkpoints.length === 0 ? (
+              <tr><td colSpan={6} className="px-4 py-6 text-center text-gray-700">No checkpoint data</td></tr>
+            ) : checkpoints.map((cp) => {
+              const lagPct = cp.latest_global > 0 ? (cp.lag_events / cp.latest_global) * 100 : 0;
+              const lagColor =
+                cp.lag_events === 0  ? "text-green-400"  :
+                cp.lag_events < 10   ? "text-yellow-400" :
+                cp.lag_events < 100  ? "text-orange-400" : "text-red-400";
+              const statusLabel =
+                cp.lag_events === 0  ? "UP TO DATE"  :
+                cp.lag_events < 10   ? "NEAR LIVE"   :
+                cp.lag_events < 100  ? "LAGGING"     : "BEHIND";
+              const statusCls =
+                cp.lag_events === 0  ? "bg-green-900 text-green-400"   :
+                cp.lag_events < 10   ? "bg-yellow-900 text-yellow-400" :
+                cp.lag_events < 100  ? "bg-orange-900 text-orange-400" : "bg-red-900 text-red-400";
+              return (
+                <tr key={cp.projection_name} className="border-b border-gray-800/40 hover:bg-gray-800/30">
+                  <td className="px-4 py-2.5 text-indigo-300 font-mono">{cp.projection_name}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-300 font-mono">{cp.last_position.toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-right text-gray-400 font-mono">{cp.latest_global.toLocaleString()}</td>
+                  <td className="px-4 py-2.5 text-right">
+                    <div className="flex items-center justify-end gap-2">
+                      <div className="w-20 h-1.5 bg-gray-800 rounded-full overflow-hidden">
+                        <div
+                          className={`h-full rounded-full transition-all ${
+                            cp.lag_events === 0 ? "bg-green-500" :
+                            cp.lag_events < 10  ? "bg-yellow-500" :
+                            cp.lag_events < 100 ? "bg-orange-500" : "bg-red-500"
+                          }`}
+                          style={{ width: `${Math.min(lagPct, 100)}%` }}
+                        />
+                      </div>
+                      <span className={`font-mono font-semibold ${lagColor}`}>{cp.lag_events}</span>
+                    </div>
+                  </td>
+                  <td className="px-4 py-2.5 text-gray-600 font-mono">
+                    {cp.updated_at ? new Date(cp.updated_at).toLocaleString() : "—"}
+                  </td>
+                  <td className="px-4 py-2.5">
+                    <span className={`px-2 py-0.5 rounded text-xs font-bold ${statusCls}`}>{statusLabel}</span>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
       {/* ── Row 1: Event store KPIs + daily volume line ── */}
