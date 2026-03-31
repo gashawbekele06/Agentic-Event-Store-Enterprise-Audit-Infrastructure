@@ -20,7 +20,7 @@ import asyncpg
 
 from src.event_store import EventStore
 
-DATABASE_URL = "postgresql://postgres:13621@localhost:5433/apex_ledger"
+DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/apex_ledger"
 SEP = "─" * 70
 
 

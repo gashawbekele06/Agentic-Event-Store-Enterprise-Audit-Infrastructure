@@ -8,7 +8,7 @@ from pathlib import Path
 import asyncpg
 
 
-DATABASE_URL = "postgresql://postgres:13621@localhost:5433/apex_ledger"
+DATABASE_URL = "postgresql://postgres:13621@localhost:5432/apex_ledger"
 SCHEMA_PATH = Path(__file__).resolve().parent / "src" / "schema.sql"
 
 

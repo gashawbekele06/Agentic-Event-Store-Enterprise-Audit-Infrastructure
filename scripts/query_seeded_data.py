@@ -28,7 +28,7 @@ import asyncpg
 async def main() -> None:
     dsn = os.getenv(
         "DATABASE_URL",
-        "postgresql://postgres:13621@localhost:5433/apex_ledger",
+        "postgresql://postgres:postgres@localhost:5432/apex_ledger",
     )
     conn = await asyncpg.connect(dsn)
 

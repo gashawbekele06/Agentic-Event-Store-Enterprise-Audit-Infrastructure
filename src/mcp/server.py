@@ -59,7 +59,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 DATABASE_URL = os.environ.get(
-    "DATABASE_URL", "postgresql://postgres:13621@localhost:5433/apex_ledger"
+    "DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/apex_ledger"
 )
 
 

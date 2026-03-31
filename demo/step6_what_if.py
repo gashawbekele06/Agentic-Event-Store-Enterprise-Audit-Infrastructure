@@ -29,7 +29,7 @@ from src.commands.handlers import (
 from src.models.events import CreditAnalysisCompleted
 from src.what_if import run_what_if, InMemoryApplicationSummary
 
-DATABASE_URL = "postgresql://postgres:13621@localhost:5433/apex_ledger"
+DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/apex_ledger"
 SEP = "─" * 70
 
 

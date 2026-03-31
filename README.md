@@ -47,7 +47,7 @@ strict regulatory audit requirements.
 ### Prerequisites
 
 - Python 3.12+
-- PostgreSQL running locally on port 5433
+- PostgreSQL running locally on port 5432
 - `uv` package manager
 
 ### 1. Install dependencies
@@ -60,10 +60,10 @@ uv sync
 
 ```bash
 # Create the database
-psql -U postgres -h localhost -p 5433 -c "CREATE DATABASE apex_ledger;"
+psql -U postgres -h localhost -p 5432 -c "CREATE DATABASE apex_ledger;"
 
 # Apply schema (tables, indexes, constraints)
-psql -U postgres -h localhost -p 5433 -d apex_ledger -f src/schema.sql
+psql -U postgres -h localhost -p 5432 -d apex_ledger -f src/schema.sql
 ```
 
 ### 3. Seed the event store with starter data
@@ -240,7 +240,7 @@ The server exposes the full event store over the Model Context Protocol:
 
 | Variable       | Default                                                  | Description           |
 | -------------- | -------------------------------------------------------- | --------------------- |
-| `DATABASE_URL` | `postgresql://postgres:13621@localhost:5433/apex_ledger` | PostgreSQL connection |
+| `DATABASE_URL` | `postgresql://postgres:13621@localhost:5432/apex_ledger` | PostgreSQL connection |
 
 ## Completion Status
 

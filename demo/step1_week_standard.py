@@ -31,7 +31,7 @@ from src.commands.handlers import (
 )
 from src.integrity.audit_chain import run_integrity_check
 
-DATABASE_URL = "postgresql://postgres:13621@localhost:5433/apex_ledger"
+DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/apex_ledger"
 SEP = "─" * 70
 
 

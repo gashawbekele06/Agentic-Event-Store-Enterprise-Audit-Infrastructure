@@ -28,7 +28,7 @@ from src.commands.handlers import (
 from src.projections.compliance_audit import ComplianceAuditViewProjection
 from src.projections import ProjectionDaemon
 
-DATABASE_URL = "postgresql://postgres:13621@localhost:5433/apex_ledger"
+DATABASE_URL = "postgresql://postgres:postgres@localhost:5432/apex_ledger"
 SEP = "─" * 70
 
 

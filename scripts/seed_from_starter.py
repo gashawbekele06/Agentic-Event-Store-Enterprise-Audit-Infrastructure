@@ -191,7 +191,7 @@ def build_compliance_flag_events(
 async def main(limit: int | None, dry_run: bool) -> None:
     dsn = os.getenv(
         "DATABASE_URL",
-        "postgresql://postgres:13621@localhost:5433/apex_ledger",
+        "postgresql://postgres:postgres@localhost:5432/apex_ledger",
     )
 
     profiles = load_profiles()
